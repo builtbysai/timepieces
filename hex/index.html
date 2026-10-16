@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Hex — the time is the color</title>
+<style>
+html,body{margin:0;padding:0;height:100%;overflow:hidden;
+  font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;}
+#stage{position:fixed;inset:0;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;transition:background-color 1s linear;}
+#time{font-size:clamp(48px,12vw,120px);font-weight:600;letter-spacing:.04em;
+  color:#fff;text-shadow:0 2px 24px rgba(0,0,0,.35);}
+#hex{margin-top:12px;font-size:15px;letter-spacing:.3em;color:rgba(255,255,255,.75);}
+</style>
+</head>
+<body>
+<div id="stage">
+  <div id="time">00:00:00</div>
+  <div id="hex">#000000</div>
+</div>
+<script>
+'use strict';
+/* Hex: the background IS the current time, as a hex color #HHMMSS.
+   Noon is a steel blue, midnight is black, every second shifts the hue.
+   Time you can feel in your eyes before you read it. */
+const stage=document.getElementById('stage'),
+      timeEl=document.getElementById('time'),
+      hexEl=document.getElementById('hex');
+function pad(n){return String(n).padStart(2,'0');}
+function tick(){
+  const n=new Date(),h=n.getHours(),m=n.getMinutes(),s=n.getSeconds();
+  const hex='#'+pad(h)+pad(m)+pad(s);
+  stage.style.backgroundColor=hex;
+  timeEl.textContent=pad(h)+':'+pad(m)+':'+pad(s);
+  hexEl.textContent=hex;
+}
+tick();setInterval(tick,1000);
+</script>
+</body>
+</html>

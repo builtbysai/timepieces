@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Meridian — a one-line clock</title>
+<style>
+html,body{margin:0;padding:0;height:100%;overflow:hidden;background:#0a0a0c;}
+#stage{position:fixed;inset:0;display:block;}
+</style>
+</head>
+<body>
+<canvas id="stage"></canvas>
+<script>
+'use strict';
+/* Meridian: the whole clock is one unbroken line.
+   Center → hour hand → minute hand → second hand, drawn as a single path.
+   The line never lifts. Time as a continuous gesture. */
+const canvas=document.getElementById('stage'),ctx=canvas.getContext('2d');
+let W,H,CX,CY,R;
+function prep(){
+  const dpr=Math.min(devicePixelRatio||1,2);
+  W=innerWidth;H=innerHeight;CX=W/2;CY=H/2;R=Math.min(W,H)*0.38;
+  canvas.width=W*dpr;canvas.height=H*dpr;ctx.setTransform(dpr,0,0,dpr,0,0);
+  canvas.style.width=W+'px';canvas.style.height=H+'px';
+}
+prep();addEventListener('resize',prep);
+
+function frame(){
+  const now=new Date();
+  const s=now.getSeconds()+now.getMilliseconds()/1000;
+  const m=now.getMinutes()+s/60;
+  const h=(now.getHours()%12)+m/60;
+  const aH=(h/12)*Math.PI*2-Math.PI/2;
+  const aM=(m/60)*Math.PI*2-Math.PI/2;
+  const aS=(s/60)*Math.PI*2-Math.PI/2;
+  const hx=CX+Math.cos(aH)*R*0.5, hy=CY+Math.sin(aH)*R*0.5;
+  const mx=CX+Math.cos(aM)*R*0.78, my=CY+Math.sin(aM)*R*0.78;
+  const sx=CX+Math.cos(aS)*R*0.92, sy=CY+Math.sin(aS)*R*0.92;
+
+  ctx.fillStyle='#0a0a0c';ctx.fillRect(0,0,W,H);
+
+  // faint dial
+  ctx.strokeStyle='rgba(255,255,255,0.07)';ctx.lineWidth=1;
+  ctx.beginPath();ctx.arc(CX,CY,R,0,Math.PI*2);ctx.stroke();
+  for(let i=0;i<12;i++){
+    const a=i/12*Math.PI*2;
+    ctx.beginPath();
+    ctx.moveTo(CX+Math.cos(a)*R*0.94,CY+Math.sin(a)*R*0.94);
+    ctx.lineTo(CX+Math.cos(a)*R,CY+Math.sin(a)*R);
+    ctx.stroke();
+  }
+
+  // the one line: center → hour → minute → second
+  ctx.strokeStyle='#f0ede4';ctx.lineWidth=2.5;ctx.lineCap='round';ctx.lineJoin='round';
+  ctx.beginPath();
+  ctx.moveTo(CX,CY);
+  ctx.lineTo(hx,hy);
+  ctx.lineTo(mx,my);
+  ctx.lineTo(sx,sy);
+  ctx.stroke();
+
+  // joints glow
+  [[CX,CY,4],[hx,hy,3],[mx,my,2.5]].forEach(([x,y,r])=>{
+    ctx.fillStyle='#f0ede4';ctx.beginPath();ctx.arc(x,y,r,0,Math.PI*2);ctx.fill();
+  });
+  // second tip in accent
+  ctx.fillStyle='#e0643a';ctx.beginPath();ctx.arc(sx,sy,4,0,Math.PI*2);ctx.fill();
+
+  requestAnimationFrame(frame);
+}
+frame();
+</script>
+</body>
+</html>

@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Tide — the minute, breathing</title>
+<style>
+html,body{margin:0;padding:0;height:100%;overflow:hidden;background:#08080a;}
+#stage{position:fixed;inset:0;display:block;}
+</style>
+</head>
+<body>
+<canvas id="stage"></canvas>
+<script>
+'use strict';
+/* Tide: each minute is one breath. The circle inhales for thirty seconds,
+   exhales for thirty. Its color runs cold at night, warm at midday —
+   the temperature of the hour, felt in the chest. */
+const canvas=document.getElementById('stage'),ctx=canvas.getContext('2d');
+let W,H,CX,CY,BASE;
+function prep(){
+  const dpr=Math.min(devicePixelRatio||1,2);
+  W=innerWidth;H=innerHeight;CX=W/2;CY=H/2;BASE=Math.min(W,H)*0.22;
+  canvas.width=W*dpr;canvas.height=H*dpr;ctx.setTransform(dpr,0,0,dpr,0,0);
+  canvas.style.width=W+'px';canvas.style.height=H+'px';
+}
+prep();addEventListener('resize',prep);
+
+function frame(){
+  const n=new Date();
+  const s=n.getSeconds()+n.getMilliseconds()/1000; // 0..60
+  const breath=Math.sin((s/60)*Math.PI*2-Math.PI/2)*0.5+0.5; // 0..1..0
+  const h=n.getHours()+n.getMinutes()/60; // 0..24
+  // color temperature: cold blue at 3am, warm amber at 3pm
+  const warmth=Math.sin(((h-3)/24)*Math.PI*2)*0.5+0.5;
+  const r=Math.round(90+warmth*140), g=Math.round(140+warmth*40), b=Math.round(200-warmth*120);
+  const rad=BASE*(0.55+breath*0.75);
+
+  ctx.fillStyle='#08080a';ctx.fillRect(0,0,W,H);
+
+  // ripple rings: past breaths fading
+  for(let i=4;i>=1;i--){
+    const rr=rad+i*26, a=0.10/i;
+    ctx.strokeStyle=`rgba(${r},${g},${b},${a.toFixed(3)})`;
+    ctx.lineWidth=1.5;
+    ctx.beginPath();ctx.arc(CX,CY,rr,0,Math.PI*2);ctx.stroke();
+  }
+
+  const grad=ctx.createRadialGradient(CX,CY,0,CX,CY,rad);
+  grad.addColorStop(0,`rgba(${r},${g},${b},0.9)`);
+  grad.addColorStop(0.75,`rgba(${r},${g},${b},0.28)`);
+  grad.addColorStop(1,`rgba(${r},${g},${b},0)`);
+  ctx.fillStyle=grad;
+  ctx.beginPath();ctx.arc(CX,CY,rad,0,Math.PI*2);ctx.fill();
+
+  // digital whisper
+  ctx.fillStyle='rgba(255,255,255,0.4)';
+  ctx.font='12px ui-monospace,Menlo,Consolas,monospace';
+  ctx.textAlign='center';
+  const p=n=>String(n).padStart(2,'0');
+  ctx.fillText(`${p(n.getHours())}:${p(n.getMinutes())}:${p(Math.floor(s))}`,CX,CY+BASE+52);
+
+  requestAnimationFrame(frame);
+}
+frame();
+</script>
+</body>
+</html>

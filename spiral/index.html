@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Spiral — twelve hours per turn</title>
+<style>
+html,body{margin:0;padding:0;height:100%;overflow:hidden;background:#070709;}
+#stage{position:fixed;inset:0;display:block;}
+</style>
+</head>
+<body>
+<canvas id="stage"></canvas>
+<script>
+'use strict';
+/* Spiral: one full turn of the spiral is twelve hours.
+   The coil draws itself as the day passes; at midnight and noon
+   it completes and begins again. You are the dot on the thread. */
+const canvas=document.getElementById('stage'),ctx=canvas.getContext('2d');
+let W,H,CX,CY,RMAX;
+function prep(){
+  const dpr=Math.min(devicePixelRatio||1,2);
+  W=innerWidth;H=innerHeight;CX=W/2;CY=H/2;RMAX=Math.min(W,H)*0.42;
+  canvas.width=W*dpr;canvas.height=H*dpr;ctx.setTransform(dpr,0,0,dpr,0,0);
+  canvas.style.width=W+'px';canvas.style.height=H+'px';
+}
+prep();addEventListener('resize',prep);
+
+function frame(){
+  const n=new Date();
+  const frac=((n.getHours()%12)+n.getMinutes()/60+n.getSeconds()/3600)/12; // 0..1
+  ctx.fillStyle='#070709';ctx.fillRect(0,0,W,H);
+
+  const TURNS=3, STEPS=720;
+  ctx.strokeStyle='rgba(150,160,180,0.28)';ctx.lineWidth=1.5;
+  ctx.beginPath();
+  for(let i=0;i<=STEPS;i++){
+    const f=i/STEPS, a=f*TURNS*Math.PI*2-Math.PI/2, r=f*RMAX;
+    const x=CX+Math.cos(a)*r, y=CY+Math.sin(a)*r;
+    i===0?ctx.moveTo(x,y):ctx.lineTo(x,y);
+  }
+  ctx.stroke();
+
+  // elapsed portion glows
+  const upto=Math.floor(frac*STEPS);
+  ctx.strokeStyle='#e8b64c';ctx.lineWidth=3;ctx.lineCap='round';
+  ctx.beginPath();
+  for(let i=0;i<=upto;i++){
+    const f=i/STEPS, a=f*TURNS*Math.PI*2-Math.PI/2, r=f*RMAX;
+    const x=CX+Math.cos(a)*r, y=CY+Math.sin(a)*r;
+    i===0?ctx.moveTo(x,y):ctx.lineTo(x,y);
+  }
+  ctx.stroke();
+
+  // you are here
+  const a=frac*TURNS*Math.PI*2-Math.PI/2, r=frac*RMAX;
+  const px=CX+Math.cos(a)*r, py=CY+Math.sin(a)*r;
+  ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(px,py,5,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='rgba(232,182,76,0.25)';ctx.beginPath();ctx.arc(px,py,14,0,Math.PI*2);ctx.fill();
+
+  requestAnimationFrame(frame);
+}
+frame();
+</script>
+</body>
+</html>

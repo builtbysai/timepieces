@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Digits — monumental time</title>
+<style>
+html,body{margin:0;padding:0;height:100%;overflow:hidden;background:#050506;
+  font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;}
+#stage{position:fixed;inset:0;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;}
+#digits{font-size:clamp(64px,17vw,190px);font-weight:700;letter-spacing:.02em;
+  color:#f2f0e9;line-height:1;font-variant-numeric:tabular-nums;}
+#digits .colon{animation:blink 1s steps(1) infinite;color:#e0643a;}
+@keyframes blink{50%{opacity:.25;}}
+#barwrap{width:min(420px,70vw);height:3px;background:#1e1e22;margin-top:34px;}
+#bar{height:100%;background:#e0643a;width:0%;}
+#date{margin-top:18px;font-size:12px;letter-spacing:.28em;color:#55565e;text-transform:uppercase;}
+</style>
+</head>
+<body>
+<div id="stage">
+  <div id="digits"><span id="hh">00</span><span class="colon">:</span><span id="mm">00</span><span class="colon">:</span><span id="ss">00</span></div>
+  <div id="barwrap"><div id="bar"></div></div>
+  <div id="date"></div>
+</div>
+<script>
+'use strict';
+/* Digits: time at monumental scale. The seconds bar below drains
+   the minute in real time — the hour you are spending, made visible. */
+const hh=document.getElementById('hh'),mm=document.getElementById('mm'),
+      ss=document.getElementById('ss'),bar=document.getElementById('bar'),
+      dateEl=document.getElementById('date');
+const p=n=>String(n).padStart(2,'0');
+function tick(){
+  const n=new Date();
+  hh.textContent=p(n.getHours());mm.textContent=p(n.getMinutes());ss.textContent=p(n.getSeconds());
+  bar.style.width=((n.getSeconds()+n.getMilliseconds()/1000)/60*100)+'%';
+  dateEl.textContent=n.toLocaleDateString([],{weekday:'long',month:'long',day:'numeric'});
+}
+tick();setInterval(tick,50);
+</script>
+</body>
+</html>

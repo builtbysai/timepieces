@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Word — time in sentences</title>
+<style>
+html,body{margin:0;padding:0;min-height:100%;background:#0c0c0e;color:#e8e6df;
+  font-family:Georgia,'Times New Roman',serif;}
+.wrap{max-width:640px;margin:0 auto;padding:18vh 32px 64px;}
+#sentence{font-size:clamp(30px,6vw,52px);line-height:1.45;font-weight:400;}
+#sentence .lit{color:#f5c96b;}
+#sub{margin-top:28px;font-family:ui-monospace,Menlo,Consolas,monospace;
+  font-size:12px;letter-spacing:.2em;color:#5a5e68;text-transform:uppercase;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div id="sentence"></div>
+  <div id="sub"></div>
+</div>
+<script>
+'use strict';
+/* Word: the time told as a sentence, the way people actually say it.
+   "It is twenty-three minutes past four in the afternoon."
+   Lit words glow; the rest waits in the dark. */
+const NUMS=['twelve','one','two','three','four','five','six','seven','eight','nine','ten','eleven',
+  'twelve','thirteen','fourteen','fifteen','sixteen','seventeen','eighteen','nineteen','twenty',
+  'twenty-one','twenty-two','twenty-three','twenty-four','twenty-five','twenty-six','twenty-seven',
+  'twenty-eight','twenty-nine','thirty','thirty-one','thirty-two','thirty-three','thirty-four',
+  'thirty-five','thirty-six','thirty-seven','thirty-eight','thirty-nine','forty','forty-one',
+  'forty-two','forty-three','forty-four','forty-five','forty-six','forty-seven','forty-eight',
+  'forty-nine','fifty','fifty-one','fifty-two','fifty-three','fifty-four','fifty-five','fifty-six',
+  'fifty-seven','fifty-eight','fifty-nine'];
+const sent=document.getElementById('sentence'),sub=document.getElementById('sub');
+function tick(){
+  const n=new Date();let h=n.getHours();const m=n.getMinutes();
+  const part=h<5?'of the night':h<12?'in the morning':h<17?'in the afternoon':h<21?'in the evening':'of the night';
+  const h12=h%12===0?12:h%12;
+  let words;
+  if(m===0)words=`It is <span class="lit">${NUMS[h12]}</span> o'clock ${part}.`;
+  else if(m<=30)words=`It is <span class="lit">${NUMS[m]}</span> minute${m===1?'':'s'} past <span class="lit">${NUMS[h12]}</span> ${part}.`;
+  else{const nh=h12%12+1;words=`It is <span class="lit">${NUMS[60-m]}</span> minute${60-m===1?'':'s'} to <span class="lit">${NUMS[nh]}</span> ${part}.`;}
+  sent.innerHTML=words;
+  sub.textContent=n.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+}
+tick();setInterval(tick,5000);
+</script>
+</body>
+</html>

@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Timepieces — Hans Sai</title>
+<style>
+  :root { --bg:#070708; --ink:#e8e6df; --mut:#6b6f7a; --line:#1c1e26; }
+  * { box-sizing:border-box; }
+  html,body { margin:0; padding:0; background:var(--bg); color:var(--ink);
+    font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; }
+  .wrap { max-width:720px; margin:0 auto; padding:64px 24px 96px; }
+  header { border-bottom:1px solid var(--line); padding-bottom:32px; margin-bottom:8px; }
+  .kicker { font-size:11px; letter-spacing:.22em; color:var(--mut); text-transform:uppercase; }
+  h1 { font-size:clamp(28px,5vw,44px); font-weight:600; letter-spacing:-.02em; margin:14px 0 10px; }
+  .dek { font-size:13px; line-height:1.7; color:var(--mut); max-width:52ch; }
+  .piece { display:block; text-decoration:none; color:inherit;
+    border-bottom:1px solid var(--line); padding:28px 4px; }
+  .piece:hover { background:#0c0d12; }
+  .piece .no { font-size:11px; color:var(--mut); letter-spacing:.18em; }
+  .piece h2 { font-size:22px; margin:8px 0 6px; letter-spacing:-.01em; }
+  .piece p { font-size:13px; line-height:1.65; color:var(--mut); margin:0; max-width:58ch; }
+  .piece .go { display:inline-block; margin-top:10px; font-size:12px; letter-spacing:.14em;
+    text-transform:uppercase; color:var(--ink); border-bottom:1px solid var(--ink); padding-bottom:2px; }
+  footer { margin-top:48px; font-size:11px; color:var(--mut); letter-spacing:.08em; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="kicker">Hans Sai</div>
+    <h1>Timepieces</h1>
+    <p class="dek">Every way to read the time. Analog hands, digital digits,
+    spoken sentences, pure color, a twelve-hour spiral, a breathing minute.
+    Each piece tells the same truth in a different language.</p>
+  </header>
+
+  <a class="piece" href="meridian/">
+    <div class="no">№ 01 — Analog, reimagined</div>
+    <h2>Meridian</h2>
+    <p>The whole clock is one unbroken line: center to hour hand to minute hand
+    to second hand. The line never lifts. Time as a continuous gesture.</p>
+    <span class="go">Open</span>
+  </a>
+
+  <a class="piece" href="digits/">
+    <div class="no">№ 02 — Digital</div>
+    <h2>Digits</h2>
+    <p>Time at monumental scale, with a seconds bar draining the minute in real
+    time. The hour you are spending, made visible.</p>
+    <span class="go">Open</span>
+  </a>
+
+  <a class="piece" href="word/">
+    <div class="no">№ 03 — Spoken</div>
+    <h2>Word</h2>
+    <p>The time told as a sentence, the way people actually say it. Lit words
+    glow; the rest waits in the dark.</p>
+    <span class="go">Open</span>
+  </a>
+
+  <a class="piece" href="hex/">
+    <div class="no">№ 04 — Color</div>
+    <h2>Hex</h2>
+    <p>The background is the current time as a hex color, #HHMMSS. Time you feel
+    in your eyes before you read it.</p>
+    <span class="go">Open</span>
+  </a>
+
+  <a class="piece" href="spiral/">
+    <div class="no">№ 05 — Spiral</div>
+    <h2>Spiral</h2>
+    <p>One full turn of the spiral is twelve hours. The coil draws itself as the
+    day passes. You are the dot on the thread.</p>
+    <span class="go">Open</span>
+  </a>
+
+  <a class="piece" href="tide/">
+    <div class="no">№ 06 — Breath</div>
+    <h2>Tide</h2>
+    <p>Each minute is one breath: inhale thirty seconds, exhale thirty. Its color
+    runs cold at night and warm at midday.</p>
+    <span class="go">Open</span>
+  </a>
+
+  <footer>builtbysai · every second, six ways</footer>
+</div>
+</body>
+</html>

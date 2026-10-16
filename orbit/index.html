@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Orbit</title>
+<style>
+html,body { margin:0; padding:0; height:100%; overflow:hidden; background:#04050a; touch-action:none; }
+#stage { position:fixed; inset:0; display:block; }
+</style>
+</head>
+<body>
+<canvas id="stage"></canvas>
+<script>
+'use strict';
+// Orbit. The solar system as a clock.
+// The sun sits center. Three planets keep the time: the rust planet
+// rounds its orbit in 60 seconds, the teal planet in 60 minutes,
+// the blue planet in 12 hours. Each trails a fading ribbon of its
+// last 120 recorded positions. Angles come straight from the real
+// clock, fractional parts included, so the motion never steps.
+// Press and hold: planets near the fingertip speed up slightly
+// while pressed. Release, and the warp eases back to true time.
+
+const canvas = document.getElementById('stage');
+function viewportWH(){
+  const vv = window.visualViewport;
+  if (vv && vv.width > 0 && vv.height > 0) return [vv.width, vv.height];
+  return [window.innerWidth, window.innerHeight];
+}
+const ctx = canvas.getContext('2d');
+
+const GROUND = '#04050a';
+const SUN = '#f4f1e8';
+const RING = '#1c2230';
+const STAR = 'rgba(198,206,222,0.30)';
+
+// period in ms, orbit radius as a fraction of maxR, color, dot size
+// as a fraction of maxR, ribbon sampling interval in ms
+const PLANETS = [
+  { period: 60 * 1000,           rFrac: 0.30, color: '#c2552b', dot: 0.021, step: 250 },
+  { period: 60 * 60 * 1000,      rFrac: 0.55, color: '#2ee6a8', dot: 0.029, step: 15000 },
+  { period: 12 * 60 * 60 * 1000, rFrac: 0.80, color: '#2e4fa3', dot: 0.037, step: 180000 }
+];
+const TRAIL = 120;
+
+// deterministic star specks, laid out once
+function mulberry32(a){return function(){a|=0;a=(a+0x6D2B79F5)|0;let t=Math.imul(a^(a>>>15),1|a);t=(t+Math.imul(t^(t>>>7),61|t))^t;return((t^(t>>>14))>>>0)/4294967296}}
+const starRnd = mulberry32(20261016);
+const STARS = [];
+for (let i = 0; i < 22; i++) STARS.push([starRnd(), starRnd(), 0.8 + starRnd() * 0.9]);
+
+// angle of a planet at an absolute time, before warp. Fractions of
+// the period elapsed since local midnight, turned into radians,
+// zero at the top of the orbit.
+function baseAngle(p, ms) {
+  const d = new Date(ms);
+  let frac;
+  if (p.period === 60000) {
+    frac = (d.getSeconds() + d.getMilliseconds() / 1000) / 60;
+  } else if (p.period === 3600000) {
+    frac = (d.getMinutes() + (d.getSeconds() + d.getMilliseconds() / 1000) / 60) / 60;
+  } else {
+    frac = ((d.getHours() % 12) + (d.getMinutes() + d.getSeconds() / 60) / 60) / 12;
+  }
+  return frac * Math.PI * 2 - Math.PI / 2;
+}
+
+// per-planet state: warp offset (radians added by fingertip
+// gravity) and the ribbon, a ring buffer of past angles pre-filled
+// at load with where the planet actually was over the recent past
+PLANETS.forEach(p => {
+  p.warp = 0;
+  p.trail = [];
+  const now = Date.now();
+  for (let k = TRAIL - 1; k >= 0; k--) p.trail.push(baseAngle(p, now - k * p.step));
+  p.lastPush = now;
+});
+
+// sun glow sprite, rendered once. In the node-canvas QA harness
+// document.createElement is unavailable, so the glow falls back to
+// a radial gradient fill drawn in place; visually the same.
+let glowSprite = null;
+function makeGlow() {
+  try {
+    if (!document.createElement) return;
+    const s = 256;
+    const c = document.createElement('canvas');
+    c.width = s; c.height = s;
+    const g = c.getContext('2d');
+    const grad = g.createRadialGradient(s/2, s/2, 0, s/2, s/2, s/2);
+    grad.addColorStop(0, 'rgba(244,241,232,0.85)');
+    grad.addColorStop(0.25, 'rgba(244,241,232,0.28)');
+    grad.addColorStop(0.6, 'rgba(244,241,232,0.08)');
+    grad.addColorStop(1, 'rgba(244,241,232,0)');
+    g.fillStyle = grad;
+    g.fillRect(0, 0, s, s);
+    glowSprite = c;
+  } catch (e) { glowSprite = null; }
+}
+makeGlow();
+
+let pointer = { down: false, x: 0, y: 0 };
+let lastNow = null;
+
+function layout(w, h) {
+  const scrMin = (window.screen && window.screen.width > 0)
+    ? Math.min(window.screen.width, window.screen.height) : 0;
+  const mobileLayout = (scrMin > 0 && scrMin < 700) || h > w * 1.15;
+  // the system fills about 85% of the frame (90% on phones)
+  const fill = mobileLayout ? 0.90 : 0.85;
+  const maxR = (Math.min(w, h) * fill / 2) / 0.80;
+  return { cx: w / 2, cy: h / 2, maxR };
+}
+
+function drawFrame(nowMs) {
+  const [w, h] = viewportWH();
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)) {
+    canvas.width = Math.round(w * dpr);
+    canvas.height = Math.round(h * dpr);
+  }
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  canvas.style.width = w + 'px';
+  canvas.style.height = h + 'px';
+
+  ctx.fillStyle = GROUND;
+  ctx.fillRect(0, 0, w, h);
+
+  const { cx, cy, maxR } = layout(w, h);
+  const now = Date.now();
+
+  // frame delta for the warp physics, clamped for tab switches
+  let dt = 0;
+  if (lastNow != null) dt = Math.min(0.05, Math.max(0, (nowMs - lastNow) / 1000));
+  lastNow = nowMs;
+
+  // current angle and position per planet
+  const pos = PLANETS.map(p => {
+    const a = baseAngle(p, now) + p.warp;
+    const r = p.rFrac * maxR;
+    return { a, x: cx + r * Math.cos(a), y: cy + r * Math.sin(a) };
+  });
+
+  // fingertip gravity: while pressed, a planet near the fingertip
+  // gains extra angular speed; released, the warp decays away
+  PLANETS.forEach((p, i) => {
+    if (pointer.down && dt > 0) {
+      const d = Math.hypot(pointer.x - pos[i].x, pointer.y - pos[i].y);
+      const reach = maxR * 0.45;
+      const influence = Math.max(0, 1 - d / reach);
+      const baseRate = Math.PI * 2 / (p.period / 1000);
+      p.warp += baseRate * 1.2 * influence * dt;
+    } else if (!pointer.down) {
+      p.warp *= Math.exp(-1.6 * dt);
+      if (Math.abs(p.warp) < 1e-5) p.warp = 0;
+    }
+  });
+
+  // record ribbon points on each planet's own sampling interval
+  PLANETS.forEach((p, i) => {
+    if (now - p.lastPush >= p.step) {
+      p.trail.push(pos[i].a);
+      if (p.trail.length > TRAIL) p.trail.shift();
+      p.lastPush = now;
+    }
+  });
+
+  // stars
+  ctx.fillStyle = STAR;
+  STARS.forEach(s => { ctx.fillRect(s[0] * w, s[1] * h, s[2], s[2]); });
+
+  // orbit rings
+  ctx.strokeStyle = RING;
+  ctx.lineWidth = 1;
+  PLANETS.forEach(p => {
+    ctx.beginPath();
+    ctx.arc(cx, cy, p.rFrac * maxR, 0, Math.PI * 2);
+    ctx.stroke();
+  });
+
+  // ribbons: fading polylines through the recorded angles
+  PLANETS.forEach(p => {
+    const r = p.rFrac * maxR;
+    const n = p.trail.length;
+    ctx.lineWidth = Math.max(1, maxR * 0.006);
+    for (let i = 1; i < n; i++) {
+      const a0 = p.trail[i - 1], a1 = p.trail[i];
+      ctx.strokeStyle = p.color;
+      ctx.globalAlpha = Math.pow(i / n, 1.8) * 0.55;
+      ctx.beginPath();
+      ctx.moveTo(cx + r * Math.cos(a0), cy + r * Math.sin(a0));
+      ctx.lineTo(cx + r * Math.cos(a1), cy + r * Math.sin(a1));
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+  });
+
+  // sun: glow sprite, then the disc
+  const glowR = maxR * 0.30;
+  if (glowSprite) {
+    ctx.drawImage(glowSprite, cx - glowR, cy - glowR, glowR * 2, glowR * 2);
+  } else {
+    const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, glowR);
+    grad.addColorStop(0, 'rgba(244,241,232,0.85)');
+    grad.addColorStop(0.25, 'rgba(244,241,232,0.28)');
+    grad.addColorStop(0.6, 'rgba(244,241,232,0.08)');
+    grad.addColorStop(1, 'rgba(244,241,232,0)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(cx - glowR, cy - glowR, glowR * 2, glowR * 2);
+  }
+  ctx.fillStyle = SUN;
+  ctx.beginPath();
+  ctx.arc(cx, cy, maxR * 0.070, 0, Math.PI * 2);
+  ctx.fill();
+
+  // planets: flat dots, no texture
+  PLANETS.forEach((p, i) => {
+    ctx.fillStyle = p.color;
+    ctx.beginPath();
+    ctx.arc(pos[i].x, pos[i].y, Math.max(1.6, p.dot * maxR), 0, Math.PI * 2);
+    ctx.fill();
+  });
+  return {};
+}
+
+function loop(nowMs) {
+  drawFrame(nowMs);
+  if (typeof requestAnimationFrame === 'function') requestAnimationFrame(loop);
+}
+drawFrame(performance.now());
+if (typeof requestAnimationFrame === 'function') requestAnimationFrame(loop);
+
+canvas.addEventListener('pointerdown', ev => {
+  pointer.down = true;
+  pointer.x = ev.clientX; pointer.y = ev.clientY;
+});
+canvas.addEventListener('pointermove', ev => {
+  if (!pointer.down) return;
+  pointer.x = ev.clientX; pointer.y = ev.clientY;
+});
+function endPointer() { pointer.down = false; }
+canvas.addEventListener('pointerup', endPointer);
+canvas.addEventListener('pointercancel', endPointer);
+window.addEventListener('resize', () => drawFrame(performance.now()));
+if (window.visualViewport) window.visualViewport.addEventListener('resize', () => drawFrame(performance.now()));
+</script>
+</body>
+</html>

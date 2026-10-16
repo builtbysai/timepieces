@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Flicker</title>
+<style>
+html,body { margin:0; padding:0; height:100%; overflow:hidden; background:#050505; touch-action:none; }
+#stage { position:fixed; inset:0; display:block; }
+</style>
+</head>
+<body>
+<canvas id="stage"></canvas>
+<script>
+'use strict';
+// Flicker. Six nixie tubes showing real time, HH MM SS. Each digit is
+// a hand-built wire numeral: a set of polylines on a 4x6 grid, drawn
+// as a thin stroked path (double-stroke: a soft wide pass under a
+// bright thin pass), pre-rendered once per digit to an offscreen
+// canvas with its glow, then blitted each frame. Digits idle with
+// 2 percent brightness noise. On change, the old digit fades while
+// the new one strikes: a white flash that decays over 150ms plus a
+// short alpha ramp. Tap a tube and it re-strikes, for joy only.
+
+const canvas = document.getElementById('stage');
+function viewportWH(){
+  const vv = window.visualViewport;
+  if (vv && vv.width > 0 && vv.height > 0) return [vv.width, vv.height];
+  return [window.innerWidth, window.innerHeight];
+}
+const ctx = canvas.getContext('2d');
+
+const GROUND = '#050505';
+const GLOW = '#ff9a3c';
+const GLASS = '#1a1a1e';
+const PALE = '#ffd9a0';
+
+// Wire numerals on a 4 wide x 6 tall stage (x: 0..4, y: 0..6, y
+// down). Each digit is a list of strokes; each stroke is a sampled
+// point list. The shapes follow real nixie wire numerals: curved
+// spines, looped 6/8/9, an oval 0, a diagonal 7, never segment
+// blocks. Helpers sample lines, quadratic curves and ovals once.
+function LN(x1, y1, x2, y2, n) {
+  const pts = [];
+  n = n || 8;
+  for (let i = 0; i <= n; i++) pts.push([x1 + (x2 - x1) * i / n, y1 + (y2 - y1) * i / n]);
+  return pts;
+}
+function QZ(x0, y0, x1, y1, x2, y2, n) {
+  const pts = [];
+  n = n || 16;
+  for (let i = 0; i <= n; i++) {
+    const t = i / n, u = 1 - t;
+    pts.push([u * u * x0 + 2 * u * t * x1 + t * t * x2, u * u * y0 + 2 * u * t * y1 + t * t * y2]);
+  }
+  return pts;
+}
+function OV(cx, cy, rx, ry, n) {
+  const pts = [];
+  n = n || 30;
+  for (let i = 0; i <= n; i++) {
+    const a = i / n * Math.PI * 2;
+    pts.push([cx + rx * Math.cos(a), cy + ry * Math.sin(a)]);
+  }
+  return pts;
+}
+function JOIN() {
+  const pts = [];
+  for (const s of arguments) for (const p of s) pts.push(p);
+  return pts;
+}
+const DIGITS = [
+  // 0: one tall oval
+  [OV(2.0, 3.0, 1.62, 2.72, 40)],
+  // 1: flag into a straight stem, small foot
+  [JOIN(QZ(1.1, 1.5, 1.9, 0.8, 2.55, 0.35, 8), LN(2.55, 0.35, 2.55, 5.6, 14)),
+   LN(1.35, 5.65, 3.75, 5.65, 8)],
+  // 2: curved crown, diagonal sweep, flat foot
+  [JOIN(QZ(0.45, 1.75, 0.75, 0.15, 2.1, 0.12, 12), QZ(2.1, 0.12, 3.55, 0.2, 3.6, 1.5, 12),
+        QZ(3.6, 1.5, 3.3, 2.9, 0.55, 5.55, 16), LN(0.55, 5.55, 3.7, 5.55, 10))],
+  // 3: two bellies meeting at a pinch
+  [JOIN(QZ(0.5, 1.1, 1.6, 0.05, 2.55, 0.3, 10), QZ(2.55, 0.3, 3.75, 0.9, 3.3, 2.05, 12),
+        QZ(3.3, 2.05, 2.9, 2.75, 1.7, 2.9, 10), QZ(1.7, 2.9, 3.1, 3.15, 3.6, 4.05, 10),
+        QZ(3.6, 4.05, 3.55, 5.35, 2.0, 5.75, 12), QZ(2.0, 5.75, 0.9, 5.7, 0.4, 4.9, 10))],
+  // 4: diagonal, crossbar, stem (two strokes)
+  [JOIN(LN(2.85, 0.35, 0.35, 3.95, 14), LN(0.35, 3.95, 3.8, 3.95, 10)),
+   LN(2.85, 0.35, 2.85, 5.7, 14)],
+  // 5: top bar, short drop, round belly
+  [JOIN(LN(3.55, 0.3, 0.55, 0.3, 10), LN(0.55, 0.3, 0.55, 2.5, 8),
+        QZ(0.55, 2.5, 1.7, 2.15, 2.7, 2.6, 10), QZ(2.7, 2.6, 3.75, 3.3, 3.45, 4.6, 12),
+        QZ(3.45, 4.6, 3.0, 5.8, 1.75, 5.8, 10), QZ(1.75, 5.8, 0.8, 5.7, 0.4, 4.95, 8))],
+  // 6: shoulder sweeping down into a bottom loop
+  [JOIN(QZ(3.35, 1.15, 2.2, 0.35, 1.35, 1.1, 12), QZ(1.35, 1.1, 0.45, 2.2, 0.5, 3.6, 12)),
+   OV(2.02, 4.28, 1.52, 1.42, 34)],
+  // 7: top bar, long diagonal
+  [JOIN(LN(0.4, 0.32, 3.7, 0.32, 10), LN(3.7, 0.32, 1.65, 5.7, 16))],
+  // 8: two stacked loops
+  [OV(2.0, 1.52, 1.32, 1.3, 30), OV(2.0, 4.22, 1.58, 1.52, 34)],
+  // 9: top loop, tail curving down and under
+  [OV(1.98, 1.72, 1.52, 1.5, 34),
+   JOIN(QZ(3.5, 1.95, 3.55, 3.6, 2.9, 4.9, 14), QZ(2.9, 4.9, 2.3, 5.85, 0.85, 5.8, 10))]
+];
+
+function digitPath(g, d, ox, oy, ux, uy) {
+  g.beginPath();
+  for (const stroke of DIGITS[d]) {
+    stroke.forEach(([x, y], i) => {
+      const X = ox + x * ux, Y = oy + y * uy;
+      if (i === 0) g.moveTo(X, Y); else g.lineTo(X, Y);
+    });
+  }
+}
+// Direct draw, used when offscreen canvases are unavailable (the
+// headless QA renderer): same layered passes as the sprites.
+function drawDigitDirect(g, d, x, y, dw, dh, coreOnly) {
+  const ux = dw / 4, uy = dh / 6;
+  g.lineJoin = 'round'; g.lineCap = 'round';
+  if (!coreOnly) {
+    const passes = [
+      [ux * 0.62, 'rgba(255,154,60,0.10)'],
+      [ux * 0.34, 'rgba(255,154,60,0.20)'],
+      [ux * 0.17, 'rgba(255,154,60,0.45)']
+    ];
+    for (const [lw, style] of passes) {
+      g.strokeStyle = style; g.lineWidth = Math.max(0.6, lw);
+      digitPath(g, d, x, y, ux, uy); g.stroke();
+    }
+  }
+  g.strokeStyle = PALE;
+  g.lineWidth = Math.max(0.7, ux * 0.075);
+  digitPath(g, d, x, y, ux, uy); g.stroke();
+  g.strokeStyle = 'rgba(255,217,160,0.55)';
+  g.lineWidth = Math.max(0.5, ux * 0.03);
+  digitPath(g, d, x + ux * 0.10, y - uy * 0.05, ux, uy); g.stroke();
+}
+
+// Pre-rendered digit sprites, built lazily at the current tube size.
+let sprites = null;
+let spriteKey = '';
+let spritesFailed = false;
+function buildSprites(tw, th) {
+  if (spritesFailed) return null;
+  const key = tw + 'x' + th;
+  if (sprites && spriteKey === key) return sprites;
+  spriteKey = key;
+  const pad = Math.ceil(tw * 0.55);
+  const W = Math.ceil(tw + pad * 2), H = Math.ceil(th + pad * 2);
+  const mk = () => {
+    try {
+      const c = document.createElement('canvas');
+      c.width = Math.max(2, W); c.height = Math.max(2, H);
+      return c;
+    } catch (e) { return null; }
+  };
+  sprites = [];
+  const ux = tw / 4, uy = th / 6;
+  for (let d = 0; d < 10; d++) {
+    const glowC = mk(), coreC = mk();
+    if (!glowC || !coreC) { spritesFailed = true; sprites = null; return null; }
+    const path = (g) => digitPath(g, d, pad, pad, ux, uy);
+    let g = glowC.getContext('2d');
+    g.lineJoin = 'round'; g.lineCap = 'round';
+    // layered glow: wide faint passes build the halo, no blur filter
+    const passes = [
+      [ux * 0.62, 'rgba(255,154,60,0.10)'],
+      [ux * 0.34, 'rgba(255,154,60,0.20)'],
+      [ux * 0.17, 'rgba(255,154,60,0.45)']
+    ];
+    for (const [lw, style] of passes) {
+      g.strokeStyle = style; g.lineWidth = Math.max(0.6, lw);
+      path(g); g.stroke();
+    }
+    g = coreC.getContext('2d');
+    g.lineJoin = 'round'; g.lineCap = 'round';
+    g.strokeStyle = PALE;
+    g.lineWidth = Math.max(0.7, ux * 0.075);
+    path(g); g.stroke();
+    // second hairline offset pass gives the double-wire feel
+    g.strokeStyle = 'rgba(255,217,160,0.55)';
+    g.lineWidth = Math.max(0.5, ux * 0.03);
+    g.save();
+    g.translate(ux * 0.10, -uy * 0.05);
+    path(g); g.stroke();
+    g.restore();
+    sprites.push({ glow: glowC, core: coreC, pad });
+  }
+  return sprites;
+}
+
+// per-tube state: current digit, previous digit, strike start time
+const tubes = [];
+for (let i = 0; i < 6; i++) tubes.push({ cur: -1, prev: -1, strikeAt: -1e9 });
+
+function flickerNoise(t, i) {
+  // cheap smooth-ish noise, deterministic per tube
+  return Math.sin(t * 31.7 + i * 12.9898) * 0.5
+       + Math.sin(t * 57.3 + i * 78.233) * 0.3
+       + Math.sin(t * 91.1 + i * 37.719) * 0.2;
+}
+
+function roundRectPath(g, x, y, w, h, r) {
+  g.beginPath();
+  g.moveTo(x + r, y);
+  g.lineTo(x + w - r, y);
+  g.arcTo(x + w, y, x + w, y + r, r);
+  g.lineTo(x + w, y + h - r);
+  g.arcTo(x + w, y + h, x + w - r, y + h, r);
+  g.lineTo(x + r, y + h);
+  g.arcTo(x, y + h, x, y + h - r, r);
+  g.lineTo(x, y + r);
+  g.arcTo(x, y, x + r, y, r);
+  g.closePath();
+}
+
+function layout(w, h) {
+  const totalW = Math.min(w * 0.75, h * 1.45);
+  const gapPair = totalW * 0.055;          // extra gap between HH MM SS pairs
+  const gapIn = totalW * 0.016;
+  const tubeW = (totalW - gapIn * 4 - gapPair * 2) / 6;
+  const tubeH = tubeW * 1.72;
+  const x0 = (w - totalW) / 2;
+  const y0 = (h - tubeH) / 2;
+  const xs = [];
+  let x = x0;
+  for (let i = 0; i < 6; i++) {
+    xs.push(x);
+    x += tubeW + (i % 2 === 1 && i < 5 ? gapPair : gapIn);
+  }
+  return { tubeW, tubeH, y0, xs };
+}
+
+function timeDigits() {
+  const n = new Date();
+  const p2 = (v) => [Math.floor(v / 10), v % 10];
+  return [...p2(n.getHours()), ...p2(n.getMinutes()), ...p2(n.getSeconds())];
+}
+
+function drawFrame(nowMs) {
+  const [w, h] = viewportWH();
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)) {
+    canvas.width = Math.round(w * dpr);
+    canvas.height = Math.round(h * dpr);
+  }
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  canvas.style.width = w + 'px';
+  canvas.style.height = h + 'px';
+
+  ctx.fillStyle = GROUND;
+  ctx.fillRect(0, 0, w, h);
+
+  const L = layout(w, h);
+  const spr = buildSprites(L.tubeW * 0.56, L.tubeH * 0.62);
+  const digs = timeDigits();
+  const tSec = nowMs / 1000;
+
+  for (let i = 0; i < 6; i++) {
+    const T = tubes[i];
+    if (digs[i] !== T.cur) {
+      T.prev = T.cur;
+      T.cur = digs[i];
+      T.strikeAt = nowMs;
+    }
+    const x = L.xs[i], y = L.y0, tw = L.tubeW, th = L.tubeH;
+
+    // glass tube
+    roundRectPath(ctx, x, y, tw, th, tw * 0.30);
+    ctx.fillStyle = GLASS;
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255,154,60,0.16)';
+    ctx.lineWidth = Math.max(0.6, tw * 0.012);
+    ctx.stroke();
+    // glass highlight: one soft vertical sheen, painted flat
+    const sheen = ctx.createLinearGradient(x, y, x + tw, y);
+    sheen.addColorStop(0, 'rgba(255,255,255,0)');
+    sheen.addColorStop(0.22, 'rgba(255,255,255,0.055)');
+    sheen.addColorStop(0.42, 'rgba(255,255,255,0)');
+    roundRectPath(ctx, x, y, tw, th, tw * 0.30);
+    ctx.fillStyle = sheen;
+    ctx.fill();
+    // base cap shadow line
+    ctx.fillStyle = 'rgba(0,0,0,0.35)';
+    ctx.fillRect(x + tw * 0.12, y + th - tw * 0.10, tw * 0.76, tw * 0.045);
+
+    // digit placement inside the tube
+    const dw = L.tubeW * 0.56, dh = L.tubeH * 0.62;
+    const dx0 = x + (tw - dw) / 2, dy0 = y + (th - dh) / 2;
+    const drawDig = (d, coreOnly) => {
+      if (spr) {
+        const s = spr[d];
+        const dx = dx0 - s.pad, dy = dy0 - s.pad;
+        const sw = dw + s.pad * 2, sh = dh + s.pad * 2;
+        if (!coreOnly) ctx.drawImage(s.glow, dx, dy, sw, sh);
+        ctx.drawImage(s.core, dx, dy, sw, sh);
+      } else {
+        drawDigitDirect(ctx, d, dx0, dy0, dw, dh, coreOnly);
+      }
+    };
+
+    const sinceStrike = nowMs - T.strikeAt;
+    const striking = sinceStrike >= 0 && sinceStrike < 400;
+    // idle flicker: 2 percent brightness noise
+    let bright = 0.98 + 0.02 * flickerNoise(tSec, i);
+    if (striking && sinceStrike < 150) bright *= 0.55 + 0.45 * (sinceStrike / 150);
+
+    // fading ghost of the previous digit during the strike
+    if (striking && T.prev >= 0 && T.prev !== T.cur) {
+      const ghostA = Math.max(0, 1 - sinceStrike / 220) * 0.45;
+      if (ghostA > 0.01) {
+        ctx.globalAlpha = ghostA;
+        drawDig(T.prev, false);
+      }
+    }
+    ctx.globalAlpha = Math.max(0.2, Math.min(1, bright));
+    drawDig(T.cur, false);
+    ctx.globalAlpha = 1;
+
+    // strike flash: white overlay decaying over 150ms
+    if (striking && sinceStrike < 150) {
+      const f = 1 - sinceStrike / 150;
+      ctx.globalAlpha = f * 0.5;
+      ctx.globalCompositeOperation = 'lighter';
+      drawDig(T.cur, true);
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.globalAlpha = 1;
+    }
+  }
+  return L;
+}
+
+function loop(nowMs) {
+  drawFrame(nowMs);
+  if (typeof requestAnimationFrame === 'function') requestAnimationFrame(loop);
+}
+drawFrame(Date.now());
+if (typeof requestAnimationFrame === 'function') requestAnimationFrame(loop);
+
+canvas.addEventListener('pointerdown', ev => {
+  const r = canvas.getBoundingClientRect ? canvas.getBoundingClientRect() : { left: 0, top: 0 };
+  const px = ev.clientX - r.left, py = ev.clientY - r.top;
+  const [w, h] = viewportWH();
+  const L = layout(w, h);
+  for (let i = 0; i < 6; i++) {
+    if (px >= L.xs[i] && px <= L.xs[i] + L.tubeW && py >= L.y0 && py <= L.y0 + L.tubeH) {
+      // re-strike this tube: replay the flash on the same digit
+      tubes[i].prev = tubes[i].cur;
+      tubes[i].strikeAt = performance.now();
+      drawFrame(performance.now());
+      break;
+    }
+  }
+});
+window.addEventListener('resize', () => drawFrame(Date.now()));
+if (window.visualViewport) window.visualViewport.addEventListener('resize', () => drawFrame(Date.now()));
+</script>
+</body>
+</html>

@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Binary</title>
+<style>
+html,body { margin:0; padding:0; height:100%; overflow:hidden; background:#08080a; touch-action:none; }
+#stage { position:fixed; inset:0; display:block; }
+</style>
+</head>
+<body>
+<canvas id="stage"></canvas>
+<script>
+'use strict';
+// Binary: the time as glowing dots in binary.
+// Three rows (hours, minutes, seconds), each a row of dots, lit
+// dots are 1. Bits are shown most significant bit on the left:
+// hours 5 bits (0-23), minutes and seconds 6 bits (0-59). A dot
+// that changes state pops: scale 1 to 1.4 to 1 over 200ms. Tapping
+// a lit dot freezes its row for 5 seconds so it can be read, then
+// the row resumes. The seconds row shimmers constantly.
+
+const canvas = document.getElementById('stage');
+const ctx = canvas.getContext('2d');
+
+const GROUND = '#08080a';
+const LIT = '#ffb443';
+const RING = '#2a2c34';
+const LABEL = '#3d4048';
+
+const ROWS = [
+  { label: 'H', bits: 5 },
+  { label: 'M', bits: 6 },
+  { label: 'S', bits: 6 }
+];
+
+let prevBits = null;        // per row array of 0/1, display order (MSB first)
+let pops = null;            // per dot: pop start time (ms) or 0
+let frozen = [0, 0, 0];     // per row: frozen bits array or 0
+let freezeUntil = [0, 0, 0];
+let dotGeom = [];           // per row array of {x, y, r} in CSS px
+
+function viewportWH(){
+  const vv = window.visualViewport;
+  if (vv && vv.width > 0 && vv.height > 0) return [vv.width, vv.height];
+  return [window.innerWidth, window.innerHeight];
+}
+
+function currentBits(now) {
+  const d = new Date(now);
+  const vals = [d.getHours(), d.getMinutes(), d.getSeconds()];
+  return ROWS.map((row, r) => {
+    const bits = [];
+    for (let i = row.bits - 1; i >= 0; i--) bits.push((vals[r] >> i) & 1);
+    return bits;
+  });
+}
+
+function initState(now) {
+  prevBits = currentBits(now);
+  pops = ROWS.map(row => new Array(row.bits).fill(0));
+}
+
+function drawFrame(nowMs) {
+  const [w, h] = viewportWH();
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)) {
+    canvas.width = Math.round(w * dpr);
+    canvas.height = Math.round(h * dpr);
+  }
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  canvas.style.width = w + 'px';
+  canvas.style.height = h + 'px';
+
+  ctx.fillStyle = GROUND;
+  ctx.fillRect(0, 0, w, h);
+
+  // phone check: physical screen first, aspect fallback
+  const scrMin = (window.screen && window.screen.width > 0)
+    ? Math.min(window.screen.width, window.screen.height) : 0;
+  const isPhone = (scrMin > 0 && scrMin < 700) || h > w * 1.15;
+
+  const live = currentBits(nowMs);
+  if (!prevBits) initState(nowMs);
+
+  // effective display bits: frozen rows hold their snapshot
+  const disp = live.map((bits, r) => {
+    if (frozen[r] && nowMs < freezeUntil[r]) return frozen[r];
+    if (frozen[r]) { frozen[r] = 0; }
+    return bits;
+  });
+
+  // detect changes against previous display, start pops
+  for (let r = 0; r < 3; r++) {
+    for (let i = 0; i < ROWS[r].bits; i++) {
+      if (disp[r][i] !== prevBits[r][i]) pops[r][i] = nowMs;
+    }
+  }
+  prevBits = disp.map(bits => bits.slice());
+
+  // layout: matrix ~60% of the smaller frame dimension, centered
+  const span = Math.min(w, h) * 0.60;
+  const dotR = span * 0.055;
+  const gapX = (span - dotR * 2) / 5;            // 6 columns max
+  const labelW = dotR * 2.2;
+  const matrixW = labelW + dotR * 2 + gapX * 5;
+  const rowGap = span * 0.42;
+  const x0 = (w - matrixW) / 2;
+  const y0 = h / 2 - rowGap;
+  dotGeom = [];
+
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.font = '600 ' + Math.round(dotR * 1.05) + 'px ui-monospace, Menlo, Consolas, monospace';
+
+  for (let r = 0; r < 3; r++) {
+    const row = ROWS[r];
+    const cy = y0 + r * rowGap;
+    const geom = [];
+
+    // row label
+    ctx.fillStyle = LABEL;
+    ctx.fillText(row.label, x0 + dotR * 0.8, cy + 1);
+
+    const n = row.bits;
+    for (let i = 0; i < n; i++) {
+      const cx = x0 + labelW + dotR + i * gapX + (6 - n) * gapX / 2;
+      geom.push({ x: cx, y: cy, r: dotR });
+      const lit = disp[r][i] === 1;
+
+      // pop scale: 1 -> 1.4 -> 1 over 200ms
+      let scale = 1;
+      const pt = pops[r][i] ? (nowMs - pops[r][i]) / 200 : 1;
+      if (pt < 1) scale = 1 + 0.4 * Math.sin(pt * Math.PI);
+      if (pt >= 1) pops[r][i] = 0;
+
+      if (lit) {
+        // seconds row shimmers: gentle alpha breathing
+        let a = 1;
+        if (r === 2) a = 0.82 + 0.18 * Math.sin(nowMs / 300 + i * 1.3);
+        ctx.save();
+        ctx.shadowColor = LIT;
+        ctx.shadowBlur = dotR * 1.15;
+        ctx.globalAlpha = a;
+        ctx.fillStyle = LIT;
+        ctx.beginPath();
+        ctx.arc(cx, cy, dotR * scale, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      } else {
+        ctx.strokeStyle = RING;
+        ctx.lineWidth = Math.max(1, dotR * 0.14);
+        ctx.beginPath();
+        ctx.arc(cx, cy, dotR * scale, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+    }
+    dotGeom[r] = geom;
+  }
+  return {};
+}
+
+initState(Date.now());
+drawFrame(Date.now());
+function loop(nowMs) {
+  drawFrame(nowMs);
+  if (typeof requestAnimationFrame === 'function') requestAnimationFrame(loop);
+}
+if (typeof requestAnimationFrame === 'function') requestAnimationFrame(loop);
+
+canvas.addEventListener('pointerdown', ev => {
+  const rect = canvas.getBoundingClientRect ? canvas.getBoundingClientRect() : { left: 0, top: 0 };
+  const x = ev.clientX - rect.left, y = ev.clientY - rect.top;
+  const now = performance.now();
+  if (!prevBits) return;
+  for (let r = 0; r < 3; r++) {
+    const geom = dotGeom[r] || [];
+    for (let i = 0; i < geom.length; i++) {
+      const dx = x - geom[i].x, dy = y - geom[i].y;
+      if (dx * dx + dy * dy <= geom[i].r * geom[i].r * 2.6) {
+        // only a lit dot freezes its row
+        const bits = (frozen[r] && now < freezeUntil[r]) ? frozen[r] : currentBits(now)[r];
+        if (bits[i] === 1) {
+          frozen[r] = bits.slice();
+          freezeUntil[r] = now + 5000;
+          pops[r][i] = now;
+        }
+        return;
+      }
+    }
+  }
+});
+window.addEventListener('resize', () => drawFrame(Date.now()));
+if (window.visualViewport) window.visualViewport.addEventListener('resize', () => drawFrame(Date.now()));
+</script>
+</body>
+</html>

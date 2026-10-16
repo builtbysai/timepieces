@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Shadow</title>
+<style>
+html,body { margin:0; padding:0; height:100%; overflow:hidden; background:#efe8d4; touch-action:none; }
+#stage { position:fixed; inset:0; display:block; }
+.hint { position:fixed; left:0; right:0; bottom:max(12px, env(safe-area-inset-bottom)); text-align:center; color:rgba(26,26,26,0.45); font:12px/1.4 -apple-system,"Segoe UI",system-ui,sans-serif; letter-spacing:0.14em; pointer-events:none; user-select:none; }
+</style>
+</head>
+<body>
+<canvas id="stage"></canvas>
+<div class="hint" id="hint">drag to scrub time</div>
+<script>
+'use strict';
+// Shadow. A sundial for the digital age. One gnomon stands at the
+// center of a flat ground; its shadow is placed by the real clock.
+// Sun elevation follows a sine curve peaking at 13:00, azimuth
+// sweeps west to east, so the shadow is long to the west at dawn,
+// short at noon, long to the east at dusk. Shadow length is
+// gnomonHeight / tan(elevation), clamped near the horizon. At
+// night (before 6, after 20) the scene goes dark and a fixed soft
+// moon-shadow takes over. Drag horizontally to scrub time up to
+// plus or minus 12 hours; on release the offset eases back to real
+// time over 3 seconds.
+
+const canvas = document.getElementById('stage');
+const hint = document.getElementById('hint');
+function viewportWH(){
+  const vv = window.visualViewport;
+  if (vv && vv.width > 0 && vv.height > 0) return [vv.width, vv.height];
+  return [window.innerWidth, window.innerHeight];
+}
+const ctx = canvas.getContext('2d');
+
+const DAY_GROUND = '#efe8d4';
+const NIGHT_GROUND = '#0a0e1a';
+const INK = '#1a1a1a';
+const MOON = '#4a5a7a';
+const ELEV_MAX = 62 * Math.PI / 180;   // peak sun elevation at 13:00
+const SKEW = 13;                       // dial viewed a touch off south, so the
+                                       // short noon shadow leans clear of the bar
+
+let scrubOffset = 0;        // hours, added to real time while dragging
+let releaseFrom = 0;        // offset value at release
+let releaseAt = -1;         // ms timestamp of release, -1 = not easing
+let dragging = false;
+let dragStartX = 0;
+let dragStartOffset = 0;
+
+function realHours() {
+  const forced = parseFloat(new URLSearchParams(location.search).get('hour'));
+  if (isFinite(forced)) return forced;
+  const d = new Date();
+  return d.getHours() + d.getMinutes() / 60 + d.getSeconds() / 60 + d.getMilliseconds() / 3600000;
+}
+
+function effectiveOffset(nowMs) {
+  if (dragging) return scrubOffset;
+  if (releaseAt >= 0) {
+    const u = (nowMs - releaseAt) / 3000;
+    if (u >= 1) { releaseAt = -1; scrubOffset = 0; return 0; }
+    const e = 1 - Math.pow(1 - u, 3);
+    return releaseFrom * (1 - e);
+  }
+  return scrubOffset;
+}
+
+function drawFrame(nowMs) {
+  const [w, h] = viewportWH();
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)) {
+    canvas.width = Math.round(w * dpr);
+    canvas.height = Math.round(h * dpr);
+  }
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  canvas.style.width = w + 'px';
+  canvas.style.height = h + 'px';
+
+  let hrs = realHours() + effectiveOffset(nowMs);
+  hrs = ((hrs % 24) + 24) % 24;
+  const night = hrs < 6 || hrs > 20;
+
+  if (document.body && document.body.style) document.body.style.background = night ? NIGHT_GROUND : DAY_GROUND;
+  ctx.fillStyle = night ? NIGHT_GROUND : DAY_GROUND;
+  ctx.fillRect(0, 0, w, h);
+  if (hint && hint.style) hint.style.color = night ? 'rgba(140,160,200,0.5)' : 'rgba(26,26,26,0.45)';
+
+  const bx = w / 2, by = h * 0.56;          // gnomon base
+  const G = h * 0.30;                        // gnomon height
+  const gnomonHalf = Math.max(2, Math.min(w, h) * 0.0075);
+
+  // shadow direction and length
+  let dirx, diry, len, shadowColor, shadowAlpha;
+  if (night) {
+    // fixed soft moon-shadow, angled down to the right
+    const az = 38 * Math.PI / 180;
+    dirx = Math.sin(az); diry = Math.cos(az) * 0.55;
+    const dl = Math.hypot(dirx, diry); dirx /= dl; diry /= dl;
+    len = G * 1.15;
+    shadowColor = MOON; shadowAlpha = 0.55;
+  } else {
+    const p = (hrs - 6) / 14;                                // 0 dawn, 1 dusk
+    const elev = Math.max(0.06, ELEV_MAX * Math.sin(Math.PI * p));
+    const az = (-90 + 180 * p + SKEW) * Math.PI / 180;       // shadow azimuth, 0 = north(up)
+    dirx = Math.sin(az); diry = -Math.cos(az);
+    // ground plane foreshortening: vertical screen axis compressed
+    diry *= 0.62;
+    const dl = Math.hypot(dirx, diry); dirx /= dl; diry /= dl;
+    len = G / Math.tan(elev);
+    len = Math.min(len, Math.max(w, h) * 1.05);
+    len = Math.max(len, G * 0.18);
+    shadowColor = INK; shadowAlpha = 0.35;
+  }
+
+  // hour ticks: an arc across the ground through the base point,
+  // one tick per daylight hour, dawn at west, noon north, dusk east
+  const tickR = Math.min(w, h) * 0.40;
+  ctx.strokeStyle = night ? MOON : INK;
+  ctx.globalAlpha = night ? 0.35 : 0.16;
+  ctx.lineWidth = Math.max(1, Math.min(w, h) * 0.0022);
+  for (let hr = 6; hr <= 20; hr++) {
+    const p = (hr - 6) / 14;
+    const az = (-90 + 180 * p + SKEW) * Math.PI / 180;
+    let dx = Math.sin(az), dy = -Math.cos(az) * 0.62;
+    const dl = Math.hypot(dx, dy); dx /= dl; dy /= dl;
+    const long = hr % 3 === 0;
+    const r1 = tickR, r0 = tickR - Math.min(w, h) * (long ? 0.030 : 0.018);
+    ctx.beginPath();
+    ctx.moveTo(bx + dx * r0, by + dy * r0);
+    ctx.lineTo(bx + dx * r1, by + dy * r1);
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+
+  // shadow: a tapered quad from the gnomon base to the tip, cast a
+  // little wider than the bar so the short noon shadow still reads
+  // alongside the monolith instead of hiding behind it
+  const px = -diry, py = dirx;               // perpendicular
+  const tipx = bx + dirx * len, tipy = by + diry * len;
+  const baseHalf = gnomonHalf * 1.7;
+  const taper = Math.max(0.4, gnomonHalf * 0.35);
+  ctx.fillStyle = shadowColor;
+  ctx.globalAlpha = shadowAlpha;
+  ctx.beginPath();
+  ctx.moveTo(bx + px * baseHalf, by + py * baseHalf);
+  ctx.lineTo(tipx + px * taper, tipy + py * taper);
+  ctx.lineTo(tipx - px * taper, tipy - py * taper);
+  ctx.lineTo(bx - px * baseHalf, by - py * baseHalf);
+  ctx.closePath();
+  ctx.fill();
+  ctx.globalAlpha = 1;
+
+  // gnomon: a single vertical ink bar from its base
+  ctx.fillStyle = INK;
+  ctx.fillRect(bx - gnomonHalf, by - G, gnomonHalf * 2, G);
+}
+
+function loop(nowMs) {
+  drawFrame(nowMs);
+  if (typeof requestAnimationFrame === 'function') requestAnimationFrame(loop);
+}
+drawFrame(typeof performance !== 'undefined' ? performance.now() : 0);
+if (typeof requestAnimationFrame === 'function') requestAnimationFrame(loop);
+
+function pointerX(ev) {
+  const r = canvas.getBoundingClientRect ? canvas.getBoundingClientRect() : { left: 0 };
+  return ev.clientX - r.left;
+}
+canvas.addEventListener('pointerdown', ev => {
+  dragging = true;
+  releaseAt = -1;
+  dragStartX = pointerX(ev);
+  dragStartOffset = scrubOffset;
+});
+canvas.addEventListener('pointermove', ev => {
+  if (!dragging) return;
+  const [w] = viewportWH();
+  const dx = pointerX(ev) - dragStartX;
+  scrubOffset = Math.max(-12, Math.min(12, dragStartOffset + (dx / w) * 24));
+});
+function endDrag() {
+  if (!dragging) return;
+  dragging = false;
+  releaseFrom = scrubOffset;
+  releaseAt = performance.now();
+}
+canvas.addEventListener('pointerup', endDrag);
+canvas.addEventListener('pointercancel', endDrag);
+window.addEventListener('resize', () => drawFrame(performance.now()));
+if (window.visualViewport) window.visualViewport.addEventListener('resize', () => drawFrame(performance.now()));
+</script>
+</body>
+</html>

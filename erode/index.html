@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Erode</title>
+<style>
+html,body { margin:0; padding:0; height:100%; overflow:hidden; background:#0e0e10; touch-action:none; }
+#stage { position:fixed; inset:0; display:block; }
+</style>
+</head>
+<body>
+<canvas id="stage"></canvas>
+<script>
+'use strict';
+// Erode. A black monolith on black ground, eroding as the day passes.
+// At midnight it is whole; by 23:59 it is lace. The decay pattern is
+// deterministic per day: a PRNG seeded from the local date builds a
+// smooth value-noise field, and each cell of the monolith grid has a
+// decay threshold in (0,1). A cell holds while the day fraction is
+// below its threshold, so pits open, grow and merge as the hours pass.
+// Pressing a finger carves: thresholds near the touch are lowered
+// while pressed, then drift back to the day's pattern over 10 seconds.
+// The only other mark is the remaining mass percentage, dim mono, in
+// the bottom corner. No color, no particles.
+
+const canvas = document.getElementById('stage');
+function viewportWH(){
+  const vv = window.visualViewport;
+  if (vv && vv.width > 0 && vv.height > 0) return [vv.width, vv.height];
+  return [window.innerWidth, window.innerHeight];
+}
+const ctx = canvas.getContext('2d');
+
+const GROUND = '#0e0e10';
+const STONE = '#1c1c20';
+const TEXT = '#5a5e68';
+
+const COLS = 96, ROWS = 144;
+
+function mulberry32(a){return function(){a|=0;a=(a+0x6D2B79F5)|0;let t=Math.imul(a^(a>>>15),1|a);t=(t+Math.imul(t^(t>>>7),61|t))^t;return((t^(t>>>14))>>>0)/4294967296}}
+
+// seeded value noise on a coarse lattice, bilinear upsample
+function makeNoise(rnd, gw, gh) {
+  const lat = [];
+  for (let i = 0; i < gw * gh; i++) lat.push(rnd());
+  return function(x, y) {
+    const fx = x * (gw - 1), fy = y * (gh - 1);
+    const ix = Math.min(gw - 2, Math.floor(fx)), iy = Math.min(gh - 2, Math.floor(fy));
+    const tx = fx - ix, ty = fy - iy;
+    const sx = tx * tx * (3 - 2 * tx), sy = ty * ty * (3 - 2 * ty);
+    const a = lat[iy * gw + ix], b = lat[iy * gw + ix + 1];
+    const c = lat[(iy + 1) * gw + ix], d = lat[(iy + 1) * gw + ix + 1];
+    return a + (b - a) * sx + (c - a) * sy + (a - b - c + d) * sx * sy;
+  };
+}
+
+let dayKey = null;
+let base = null;        // base decay thresholds, length COLS*ROWS
+let shape = null;       // inside-monolith mask from seeded edge jitter
+let cellsIn = 0;
+let carveAt = null;     // Float32Array of carve shifts per cell
+let carveTime = null;   // last carve time per cell (seconds, perf clock)
+let renderedDF = -1;    // day fraction currently baked into the offscreen
+let renderedCarveMax = -1;
+
+function buildDay(date) {
+  const key = date.getFullYear() * 10000 + (date.getMonth() + 1) * 100 + date.getDate();
+  if (key === dayKey) return;
+  dayKey = key;
+  const rnd = mulberry32(key);
+  // edge jitter: monolith outline wobbles by a seeded amount per row/col
+  const rowJitL = [], rowJitR = [], colJitT = [], colJitB = [];
+  for (let j = 0; j < ROWS; j++) { rowJitL.push(rnd()); rowJitR.push(rnd()); }
+  for (let i = 0; i < COLS; i++) { colJitT.push(rnd()); colJitB.push(rnd()); }
+  // smooth the jitter along the edge so it reads as worn, not spiky
+  const smooth = arr => arr.map((v, i) => {
+    const a = arr[Math.max(0, i - 1)], b = arr[Math.min(arr.length - 1, i + 1)];
+    return (a + v * 2 + b) / 4;
+  });
+  const jl = smooth(rowJitL), jr = smooth(rowJitR), jt = smooth(colJitT), jb = smooth(colJitB);
+  shape = new Uint8Array(COLS * ROWS);
+  cellsIn = 0;
+  for (let j = 0; j < ROWS; j++) {
+    const v = j / (ROWS - 1);
+    const x0 = jl[j] * 3.2, x1 = COLS - 1 - jr[j] * 3.2;
+    for (let i = 0; i < COLS; i++) {
+      const u = i / (COLS - 1);
+      const y0 = jt[i] * 3.2, y1 = ROWS - 1 - jb[i] * 3.2;
+      const inside = (i >= x0 && i <= x1 && j >= y0 && j <= y1) ? 1 : 0;
+      shape[j * COLS + i] = inside;
+      cellsIn += inside;
+    }
+  }
+  // threshold field: layered smooth noise so pits cluster and merge
+  const n1 = makeNoise(rnd, 9, 13);
+  const n2 = makeNoise(rnd, 21, 31);
+  const n3 = makeNoise(rnd, 5, 7);
+  base = new Float32Array(COLS * ROWS);
+  for (let j = 0; j < ROWS; j++) {
+    const v = j / (ROWS - 1);
+    for (let i = 0; i < COLS; i++) {
+      const u = i / (COLS - 1);
+      let n = 0.52 * n1(u, v) + 0.30 * n2(u, v) + 0.18 * n3(u, v);
+      // edge bias: the rim crumbles a little earlier than the heart
+      const du = Math.abs(u - 0.5) * 2, dv = Math.abs(v - 0.5) * 2;
+      const rim = Math.max(du, dv);
+      n += (rim - 0.55) * 0.13;
+      base[j * COLS + i] = n;
+    }
+  }
+  // Rank-remap the field to a uniform spread over (0.01, 0.995). Smooth
+  // noise alone clusters around its mean, so the stone would vanish by
+  // mid-afternoon; the remap keeps the spatial clustering (pits still
+  // grow and merge in noise order) while making the surviving mass
+  // track the day: at fraction f, roughly (1 - f) of the stone remains,
+  // lace by late evening, nothing but a trace at 23:59.
+  const order = Array.from(base.keys()).sort((a, b) => base[a] - base[b]);
+  const N = order.length;
+  for (let k = 0; k < N; k++) {
+    base[order[k]] = 0.01 + (k / (N - 1)) * 0.985;
+  }
+  carveAt = new Float32Array(COLS * ROWS);
+  carveTime = new Float32Array(COLS * ROWS).fill(-100);
+  renderedDF = -1;
+}
+
+function dayFractionOf(date) {
+  return (date.getHours() * 3600 + date.getMinutes() * 60 + date.getSeconds()
+    + date.getMilliseconds() / 1000) / 86400;
+}
+
+// The stone is baked into a run list (merged horizontal spans per row)
+// whenever the pattern moves materially; each frame just replays the
+// runs, which is cheap and works in any canvas implementation.
+let runs = [];
+let layerGeom = '';
+
+function bake(df, nowS) {
+  runs = [];
+  let solid = 0;
+  for (let j = 0; j < ROWS; j++) {
+    let runStart = -1;
+    for (let i = 0; i <= COLS; i++) {
+      let on = false;
+      if (i < COLS) {
+        const idx = j * COLS + i;
+        if (shape[idx]) {
+          let th = base[idx];
+          const ct = carveTime[idx];
+          if (nowS - ct < 10) {
+            const rec = Math.min(1, Math.max(0, (nowS - ct) / 10));
+            th += carveAt[idx] * (1 - rec);
+          }
+          on = df < th;
+        }
+      }
+      if (on) {
+        solid++;
+        if (runStart < 0) runStart = i;
+      } else if (runStart >= 0) {
+        runs.push([runStart, j, i - runStart]);
+        runStart = -1;
+      }
+    }
+  }
+  renderedDF = df;
+  lastPct = cellsIn ? solid / cellsIn : 0;
+}
+
+let lastPct = 1;
+// pointer carve state (client coords + whether pressed)
+let pointer = null;
+
+function applyCarve(px, py, geom, nowS) {
+  const gx = (px - geom.x) / geom.w * COLS;
+  const gy = (py - geom.y) / geom.h * ROWS;
+  const r = 7;
+  const i0 = Math.max(0, Math.floor(gx - r)), i1 = Math.min(COLS - 1, Math.ceil(gx + r));
+  const j0 = Math.max(0, Math.floor(gy - r)), j1 = Math.min(ROWS - 1, Math.ceil(gy + r));
+  for (let j = j0; j <= j1; j++) {
+    for (let i = i0; i <= i1; i++) {
+      const d = Math.hypot(i - gx, j - gy) / r;
+      if (d >= 1) continue;
+      const idx = j * COLS + i;
+      const push = -0.55 * (1 - d * d);
+      if (push < carveAt[idx]) carveAt[idx] = push;
+      carveTime[idx] = nowS;
+    }
+  }
+}
+
+function geometry(w, h) {
+  const scrMin = (window.screen && window.screen.width > 0)
+    ? Math.min(window.screen.width, window.screen.height) : 0;
+  const mobileLayout = (scrMin > 0 && scrMin < 700) || h > w * 1.15;
+  const mh = h * 0.55;
+  const mw = mh * (COLS / ROWS) * 1.02;
+  const maxW = (mobileLayout ? w * 0.72 : w * 0.6);
+  const width = Math.min(mw, maxW);
+  const height = width * (ROWS / COLS) / 1.02;
+  return { x: (w - width) / 2, y: (h - height) / 2, w: width, h: height };
+}
+
+function drawFrame(nowMs) {
+  const [w, h] = viewportWH();
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)) {
+    canvas.width = Math.round(w * dpr);
+    canvas.height = Math.round(h * dpr);
+  }
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  canvas.style.width = w + 'px';
+  canvas.style.height = h + 'px';
+
+  ctx.fillStyle = GROUND;
+  ctx.fillRect(0, 0, w, h);
+
+  const date = new Date();
+  buildDay(date);
+  const df = dayFractionOf(date);
+  const nowS = nowMs / 1000;
+  const geom = geometry(w, h);
+
+  if (pointer) applyCarve(pointer.x, pointer.y, geom, nowS);
+
+  // rebake when the day has moved, a carve is active or healing, or size changed
+  let carveActive = false;
+  if (pointer) carveActive = true;
+  const gkey = geom.w.toFixed(1) + 'x' + geom.h.toFixed(1);
+  if (Math.abs(df - renderedDF) > 0.00035 || carveActive || layerGeom !== gkey) {
+    // cheap heal check: any cell carved in the last 10.5s forces a rebake
+    if (!carveActive) {
+      for (let k = 0; k < carveTime.length; k += 97) {
+        if (nowS - carveTime[k] < 10.5) { carveActive = true; break; }
+      }
+    }
+    if (Math.abs(df - renderedDF) > 0.00035 || carveActive || layerGeom !== gkey) {
+      bake(df, nowS);
+      layerGeom = gkey;
+    }
+  }
+
+  const cw = geom.w / COLS, ch = geom.h / ROWS;
+  ctx.fillStyle = STONE;
+  for (const [rx, ry, len] of runs) {
+    ctx.fillRect(geom.x + rx * cw, geom.y + ry * ch, len * cw + 0.6, ch + 0.6);
+  }
+
+  // remaining mass, dim mono, bottom corner
+  ctx.fillStyle = TEXT;
+  const fs = Math.max(10, Math.min(w, h) * 0.016);
+  ctx.font = fs + 'px ui-monospace, Menlo, Consolas, monospace';
+  ctx.textAlign = 'right';
+  ctx.textBaseline = 'alphabetic';
+  ctx.fillText(Math.round(lastPct * 100) + '%', w - fs * 0.9, h - fs * 0.9);
+  return geom;
+}
+
+function loop(nowMs) {
+  drawFrame(nowMs);
+  if (typeof requestAnimationFrame === 'function') requestAnimationFrame(loop);
+}
+drawFrame(1000 * 60 * 60 * 17 + 1000 * 60 * 24);
+if (typeof requestAnimationFrame === 'function') requestAnimationFrame(loop);
+
+canvas.addEventListener('pointerdown', ev => {
+  const r = canvas.getBoundingClientRect ? canvas.getBoundingClientRect() : { left: 0, top: 0 };
+  pointer = { x: ev.clientX - r.left, y: ev.clientY - r.top };
+});
+canvas.addEventListener('pointermove', ev => {
+  if (!pointer) return;
+  const r = canvas.getBoundingClientRect ? canvas.getBoundingClientRect() : { left: 0, top: 0 };
+  pointer = { x: ev.clientX - r.left, y: ev.clientY - r.top };
+});
+function endPointer() { pointer = null; renderedDF = -1; }
+canvas.addEventListener('pointerup', endPointer);
+canvas.addEventListener('pointercancel', endPointer);
+window.addEventListener('resize', () => drawFrame(performance.now()));
+if (window.visualViewport) window.visualViewport.addEventListener('resize', () => drawFrame(performance.now()));
+</script>
+</body>
+</html>

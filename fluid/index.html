@@ -15,43 +15,64 @@
 <script>
 (function () {
   'use strict';
-  // FLUID — a binary clock in liquid light. Timepieces № 08.
-  //
-  // Research notes (2026-10-23 rebuild):
-  // * Binary clocks that work (the Berlin Mengenlehreuhr above all)
-  //   use hard-edged fields on a strict grid. Every lamp stays a
-  //   distinct, countable unit; nothing blurs. A fluid version has to
-  //   keep that discipline: bits you can count, edges you can see.
-  // * Real droplet coalescence is never blurry either. Two drops are
-  //   sharp bodies until the film between them ruptures; then a
-  //   liquid bridge appears and grows fast (radius ~ t^1/2 in the
-  //   inertial regime), and the merged body oscillates, damped, into
-  //   its resting shape. The interface is the sharpest thing in the
-  //   picture at every instant.
-  // So: the field is computed at full resolution over the clock's own
-  // box and thresholded HARD (a two-pixel edge, with a darker rim just
-  // inside the contour, like a meniscus). Each droplet keeps a bright
-  // core, so inside a merged body you can still count the bits. When
-  // a droplet lights next to a lit neighbour the bridge snaps in
-  // quickly, and the whole cluster gets a damped wobble, the way a
-  // merged drop rings before it settles.
+  // FLUID — a binary clock whose pieces move like 2048 tiles.
+  // Timepieces № 08.
   //
   // Six columns (hours, minutes, seconds; two digits each), four rows
-  // of bits (8 4 2 1). Tap toggles the small decimal digits.
+  // of bits (8 4 2 1). Each lit bit is a droplet of amber on the grid.
+  // The motion language is 2048's: pieces GLIDE along the grid with a
+  // fast ease, and when two pieces meet they MERGE with a pop.
+  // A droplet that lights is born inside the lit cluster beside it
+  // and glides out to its home cell. Droplets lit side by side slide
+  // toward each other until they touch and fuse into one body, both
+  // cores still visible inside it, with the merge pop. When a bit
+  // goes dark, its droplet is absorbed: it glides into the nearest
+  // surviving droplet as it shrinks. Everything is drawn as crisp
+  // vector shapes — hard rim, bright core, no blur anywhere.
+  // Tap toggles the small decimal digits.
 
   var canvas = document.getElementById('cv');
   var ctx = canvas.getContext('2d');
-  var field = document.createElement('canvas');
-  var fctx = field.getContext('2d', { willReadFrequently: true });
   var W = 0, H = 0, DPR = 1;
 
   var params = new URLSearchParams(location.search);
   var freezeT = params.has('t') ? parseInt(params.get('t'), 10) : null;
-  var pinGrow = params.has('grow');
+  var pinMerge = params.has('merge'); // pin a merge mid-glide for stills
 
   var BITS = [8, 4, 2, 1];
-  var state = [];
+  var state = [];   // [col][bit] -> droplet
   var showDigits = true;
+
+  function nowHMS() {
+    if (freezeT !== null) {
+      var t = ((freezeT % 86400) + 86400) % 86400;
+      return [Math.floor(t / 3600), Math.floor(t / 60) % 60, t % 60];
+    }
+    var d = new Date();
+    return [d.getHours(), d.getMinutes(), d.getSeconds()];
+  }
+
+  function layout() {
+    var portrait = H >= W;
+    var cellR = portrait ? Math.min(W * 0.056, H * 0.040) : Math.min(H * 0.056, W * 0.028);
+    var rowGap = cellR * 2.24;
+    var colGapIn = cellR * 2.28;
+    var colGapPair = cellR * 3.30;
+    var totalW = colGapIn * 3 + colGapPair * 2;
+    var x0 = (W - totalW) / 2;
+    var gridH = rowGap * 3;
+    var cy = H * 0.46;
+    var yTop = cy - gridH / 2;
+    var xs = [], ys = [];
+    for (var c = 0; c < 6; c++) {
+      xs.push(x0 + Math.floor(c / 2) * (colGapIn + colGapPair) + (c % 2) * colGapIn);
+    }
+    for (var b = 0; b < 4; b++) ys.push(yTop + b * rowGap);
+    return { cellR: cellR, xs: xs, ys: ys, cy: cy, gridBot: yTop + gridH, rowGap: rowGap, colGapIn: colGapIn };
+  }
+
+  var L0 = null;
+  function homeOf(c, b) { return { x: L0.xs[c], y: L0.ys[b] }; }
 
   function blankState(h, m, s) {
     var digs = [
@@ -64,24 +85,17 @@
       var col = [];
       for (var b = 0; b < 4; b++) {
         var on = (digs[c] & BITS[b]) !== 0;
-        col.push({ on: on, amt: on ? 1 : 0, vel: 0, wob: Math.random() * 6.28, kick: 0, born: -1e9 });
+        var home = homeOf(c, b);
+        col.push({
+          on: on, amt: on ? 1 : 0,
+          x: home.x, y: home.y, vx: 0, vy: 0,
+          pop: 0, tx: home.x, ty: home.y, run: 1
+        });
       }
       st.push(col);
     }
     return st;
   }
-
-  function nowHMS() {
-    if (freezeT !== null) {
-      var t = ((freezeT % 86400) + 86400) % 86400;
-      return [Math.floor(t / 3600), Math.floor(t / 60) % 60, t % 60];
-    }
-    var d = new Date();
-    return [d.getHours(), d.getMinutes(), d.getSeconds()];
-  }
-
-  var hms = nowHMS();
-  state = blankState(hms[0], hms[1], hms[2]);
 
   function resize() {
     DPR = Math.min(2, window.devicePixelRatio || 1);
@@ -89,34 +103,50 @@
     H = window.innerHeight;
     canvas.width = Math.round(W * DPR);
     canvas.height = Math.round(H * DPR);
+    if (!state.length) {
+      L0 = layout();
+      var t = nowHMS();
+      state = blankState(t[0], t[1], t[2]);
+    }
   }
   window.addEventListener('resize', resize);
-  resize();
 
   canvas.addEventListener('pointerdown', function () { showDigits = !showDigits; });
 
-  function layout() {
-    var portrait = H >= W;
-    var cellR = portrait ? Math.min(W * 0.056, H * 0.040) : Math.min(H * 0.056, W * 0.028);
-    var rowGap = cellR * 2.20;
-    var colGapIn = cellR * 2.24;
-    var colGapPair = cellR * 3.30;
-    var totalW = colGapIn * 3 + colGapPair * 2;
-    var x0 = (W - totalW) / 2;
-    var gridH = rowGap * 3;
-    var cy = H * 0.46;
-    var yTop = cy - gridH / 2;
-    var xs = [], ys = [];
+  // runs of adjacent lit bits, vertically in a column and horizontally
+  // within a digit pair; returns for each cell its run size and the
+  // run's centre (in cell coordinates)
+  function computeRuns() {
+    var runs = [];
     for (var c = 0; c < 6; c++) {
-      xs.push(x0 + Math.floor(c / 2) * (colGapIn + colGapPair) + (c % 2) * colGapIn);
+      runs.push([null, null, null, null]);
     }
-    for (var b = 0; b < 4; b++) ys.push(yTop + b * rowGap);
-    var pad = cellR * 2.6;
-    return {
-      cellR: cellR, xs: xs, ys: ys, cy: cy, gridBot: yTop + gridH,
-      boxX: xs[0] - pad, boxY: ys[0] - pad,
-      boxW: (xs[5] - xs[0]) + pad * 2, boxH: (ys[3] - ys[0]) + pad * 2
-    };
+    for (var c2 = 0; c2 < 6; c2++) {
+      var b = 0;
+      while (b < 4) {
+        if (!state[c2][b].on) { b++; continue; }
+        var e = b;
+        while (e + 1 < 4 && state[c2][e + 1].on) e++;
+        var n = e - b + 1, cen = (b + e) / 2;
+        for (var k = b; k <= e; k++) runs[c2][k] = { n: n, cenB: cen, cenC: c2 };
+        b = e + 1;
+      }
+    }
+    // horizontal pairs can extend a run across the two columns of a digit
+    for (var p = 0; p < 3; p++) {
+      var cL = p * 2, cR = p * 2 + 1;
+      for (var b2 = 0; b2 < 4; b2++) {
+        if (state[cL][b2].on && state[cR][b2].on) {
+          var rl = runs[cL][b2], rr = runs[cR][b2];
+          if (rl && rr) {
+            var cenC = (cL + cR) / 2;
+            rl.hN = 2; rl.cenC = cenC;
+            rr.hN = 2; rr.cenC = cenC;
+          }
+        }
+      }
+    }
+    return runs;
   }
 
   function tickTargets(now) {
@@ -132,166 +162,174 @@
         var on = (digs[c] & BITS[b]) !== 0;
         if (on !== cell.on) {
           cell.on = on;
-          if (on) cell.born = now;
-          // a change rings the cluster: the flipped droplet and its
-          // lit neighbours take a wobble kick
-          cell.kick = 1;
-          if (b > 0) state[c][b - 1].kick = Math.max(state[c][b - 1].kick, 0.8);
-          if (b < 3) state[c][b + 1].kick = Math.max(state[c][b + 1].kick, 0.8);
-          if (c % 2 === 0) state[c + 1][b].kick = Math.max(state[c + 1][b].kick, 0.6);
-          else state[c - 1][b].kick = Math.max(state[c - 1][b].kick, 0.6);
+          var home = homeOf(c, b);
+          if (on) {
+            // born inside the nearest lit neighbour, glides home
+            var src = null;
+            [[0, -1], [0, 1], [-1, 0], [1, 0]].forEach(function (d) {
+              var cc = c + d[0], bb = b + d[1];
+              if (src || cc < 0 || cc > 5 || bb < 0 || bb > 3) return;
+              if (state[cc][bb].on && state[cc][bb].amt > 0.3) src = state[cc][bb];
+            });
+            if (src) { cell.x = src.x; cell.y = src.y; }
+            else { cell.x = home.x; cell.y = home.y; }
+            cell.vx = 0; cell.vy = 0;
+          }
+          cell.pop = 1;
+          // merging neighbours share the pop
+          if (b > 0) state[c][b - 1].pop = Math.max(state[c][b - 1].pop, 0.7);
+          if (b < 3) state[c][b + 1].pop = Math.max(state[c][b + 1].pop, 0.7);
+        }
+      }
+    }
+    // targets: droplets in a run crowd toward the run centre until
+    // they touch (spacing = 1.62 R instead of the grid's 2.24 R)
+    var runs = computeRuns();
+    var pull = (L0.rowGap - L0.cellR * 1.62) / L0.rowGap; // fraction of the gap closed
+    for (var c2 = 0; c2 < 6; c2++) {
+      for (var b2 = 0; b2 < 4; b2++) {
+        var cl = state[c2][b2];
+        var home = homeOf(c2, b2);
+        var rn = runs[c2][b2];
+        cl.run = rn ? rn.n : 1;
+        var tx = home.x, ty = home.y;
+        if (rn && rn.n > 1) {
+          var cenY = L0.ys[0] + rn.cenB * L0.rowGap;
+          ty = home.y + (cenY - home.y) * pull * 0.92;
+        }
+        if (rn && rn.hN === 2) {
+          var cenX = (L0.xs[c2] + L0.xs[c2 % 2 === 0 ? c2 + 1 : c2 - 1]) / 2;
+          var pullX = (L0.colGapIn - L0.cellR * 1.66) / L0.colGapIn;
+          tx = home.x + (cenX - home.x) * pullX * 0.92;
+        }
+        cl.tx = tx; cl.ty = ty;
+        if (!cl.on) {
+          // dying droplet: absorbed into the nearest surviving droplet
+          // in its column, or shrinks in place if none survives
+          var best = null, bd = 1e9;
+          for (var b3 = 0; b3 < 4; b3++) {
+            if (state[c2][b3].on) {
+              var dd = Math.abs(b3 - b2);
+              if (dd < bd) { bd = dd; best = state[c2][b3]; }
+            }
+          }
+          if (best) { cl.tx = best.tx; cl.ty = best.ty; }
         }
       }
     }
     return t;
   }
 
-  // shading by field strength: dark rim -> deep amber -> amber -> hot core
-  function shade(f, out, i) {
-    var r, g, b;
-    if (f < 0.16) {           // the rim: just inside the contour
-      var u = f / 0.16;
-      r = 148 + (196 - 148) * u;
-      g = 62 + (94 - 62) * u;
-      b = 10 + (18 - 10) * u;
-    } else if (f < 0.55) {
-      var v = (f - 0.16) / 0.39;
-      r = 196 + (247 - 196) * v;
-      g = 94 + (164 - 94) * v;
-      b = 18 + (58 - 18) * v;
-    } else {
-      var w = (f - 0.55) / 0.45;
-      r = 247 + (255 - 247) * w;
-      g = 164 + (221 - 164) * w;
-      b = 58 + (156 - 58) * w;
-    }
-    out[i] = r; out[i + 1] = g; out[i + 2] = b;
-  }
-
   var last = performance.now();
+
+  function drawDrop(x, y, R) {
+    var g = ctx.createRadialGradient(x - R * 0.32, y - R * 0.36, R * 0.08, x, y, R);
+    g.addColorStop(0, '#ffdf9e');
+    g.addColorStop(0.42, '#ffb84f');
+    g.addColorStop(0.82, '#f08c1e');
+    g.addColorStop(1, '#d8740f');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(x, y, R, 0, 6.283);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(146,64,8,0.45)';
+    ctx.lineWidth = Math.max(1, R * 0.04);
+    ctx.stroke();
+    var gg = ctx.createRadialGradient(x - R * 0.34, y - R * 0.40, 0, x - R * 0.34, y - R * 0.40, R * 0.46);
+    gg.addColorStop(0, 'rgba(255,250,228,0.75)');
+    gg.addColorStop(1, 'rgba(255,250,228,0)');
+    ctx.fillStyle = gg;
+    ctx.beginPath();
+    ctx.arc(x - R * 0.34, y - R * 0.40, R * 0.46, 0, 6.283);
+    ctx.fill();
+  }
 
   function frame(now) {
     var dt = Math.min(0.05, (now - last) / 1000);
     last = now;
+    L0 = layout();
     var t = tickTargets(now);
-    var L = layout();
-    var r = L.cellR;
+    var r = L0.cellR;
 
-    // droplet springs (underdamped) + decaying cluster wobble
+    // 2048 glide: stiff springs, settle in about 150 ms, tiny overshoot
     for (var c = 0; c < 6; c++) {
       for (var b = 0; b < 4; b++) {
         var cell = state[c][b];
         var target = cell.on ? 1 : 0;
-        var stiff = (target > cell.amt) ? 150 : 90;   // bridges snap in fast
-        var acc = (target - cell.amt) * stiff - cell.vel * 12;
-        cell.vel += acc * dt;
-        cell.amt += cell.vel * dt;
-        if (cell.amt < 0) { cell.amt = 0; cell.vel *= -0.3; }
-        cell.kick *= Math.exp(-dt * 2.6);
+        cell.amt += (target - cell.amt) * Math.min(1, dt * 13);
+        if (cell.amt < 0.005 && !cell.on) cell.amt = 0;
+        var k = 340, damp = 30;
+        cell.vx += ((cell.tx - cell.x) * k - cell.vx * damp) * dt;
+        cell.vy += ((cell.ty - cell.y) * k - cell.vy * damp) * dt;
+        cell.x += cell.vx * dt;
+        cell.y += cell.vy * dt;
+        cell.pop *= Math.exp(-dt * 7);
       }
     }
-    if (pinGrow) { state[5][2].amt = 0.55; state[5][2].on = true; state[5][2].kick = 0.7; }
-
-    // ---------- field over the clock's box, near full resolution ----
-    var FS = 1;
-    var bw = Math.round(L.boxW), bh = Math.round(L.boxH);
-    if (bw * bh > 520000) FS = Math.sqrt(520000 / (bw * bh));
-    var fw = Math.max(2, Math.round(bw * FS)), fh = Math.max(2, Math.round(bh * FS));
-    if (field.width !== fw || field.height !== fh) { field.width = fw; field.height = fh; }
-    fctx.clearRect(0, 0, fw, fh);
-    fctx.globalCompositeOperation = 'lighter';
-    var drops = [];
-    for (var c2 = 0; c2 < 6; c2++) {
-      for (var b2 = 0; b2 < 4; b2++) {
-        var cl = state[c2][b2];
-        if (cl.amt <= 0.01) continue;
-        var x = L.xs[c2], y = L.ys[b2];
-        var leanX = 0, leanY = 0;
-        if (b2 > 0 && state[c2][b2 - 1].amt > 0.5) leanY -= r * 0.09 * cl.amt;
-        if (b2 < 3 && state[c2][b2 + 1].amt > 0.5) leanY += r * 0.09 * cl.amt;
-        if (c2 % 2 === 0 && state[c2 + 1][b2].amt > 0.5) leanX += r * 0.07 * cl.amt;
-        if (c2 % 2 === 1 && state[c2 - 1][b2].amt > 0.5) leanX -= r * 0.07 * cl.amt;
-        var wob = 1 + 0.028 * Math.sin(now / 520 + cl.wob) * cl.amt
-                    + 0.075 * cl.kick * Math.sin(now / 68 + cl.wob * 3);
-        var R = r * (0.22 + 0.86 * cl.amt) * wob;
-        drops.push({ x: x + leanX, y: y + leanY, R: R, amt: cl.amt });
-        var fx = (x + leanX - L.boxX) * FS, fy = (y + leanY - L.boxY) * FS, fr = R * 1.52 * FS;
-        var g = fctx.createRadialGradient(fx, fy, 0, fx, fy, fr);
-        g.addColorStop(0, 'rgba(255,255,255,0.88)');
-        g.addColorStop(0.55, 'rgba(255,255,255,0.40)');
-        g.addColorStop(1, 'rgba(255,255,255,0)');
-        fctx.fillStyle = g;
-        fctx.beginPath();
-        fctx.arc(fx, fy, fr, 0, 6.283);
-        fctx.fill();
-      }
+    if (pinMerge) {
+      // seconds-ones column, bits 2 and 1: pin mid-merge
+      state[5][2].x = L0.xs[5]; state[5][2].y = (L0.ys[2] + L0.ys[3]) / 2 + r * 0.18;
+      state[5][2].pop = 0.55;
     }
-    var pulse = 0.72 + 0.28 * Math.sin(now / 1000 * Math.PI);
-    [1, 3].forEach(function (li) {
-      var cxp = (L.xs[li] + L.xs[li + 1]) / 2;
-      [-0.55, 0.55].forEach(function (off) {
-        var fx = (cxp - L.boxX) * FS, fy = (L.cy + off * r * 1.05 - L.boxY) * FS, fr = r * 0.42 * pulse * 1.5 * FS;
-        var g = fctx.createRadialGradient(fx, fy, 0, fx, fy, fr);
-        g.addColorStop(0, 'rgba(255,255,255,0.82)');
-        g.addColorStop(1, 'rgba(255,255,255,0)');
-        fctx.fillStyle = g;
-        fctx.beginPath();
-        fctx.arc(fx, fy, fr, 0, 6.283);
-        fctx.fill();
-      });
-    });
-    fctx.globalCompositeOperation = 'source-over';
 
-    // ---------- HARD threshold: a two-pixel edge, rim inside --------
-    var img = fctx.getImageData(0, 0, fw, fh);
-    var px = img.data;
-    var TH = 104, SOFT = 13;
-    for (var i = 0; i < px.length; i += 4) {
-      var a = px[i + 3];
-      if (a <= TH - SOFT) { px[i + 3] = 0; continue; }
-      var f = (a - (TH - SOFT)) / (255 - (TH - SOFT));
-      if (f > 1) f = 1;
-      var e = (a - TH) / SOFT;
-      if (e > 1) e = 1;
-      if (e < 0) e = 0;
-      px[i + 3] = Math.round(255 * e);
-      shade(f, px, i);
-    }
-    fctx.putImageData(img, 0, 0);
-
-    // ---------- main pass ----------
     ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
-    var room = ctx.createRadialGradient(W / 2, L.cy, 0, W / 2, L.cy, Math.max(W, H) * 0.72);
-    room.addColorStop(0, '#0e0e14');
-    room.addColorStop(0.55, '#090910');
-    room.addColorStop(1, '#050507');
+    var room = ctx.createRadialGradient(W / 2, L0.cy, 0, W / 2, L0.cy, Math.max(W, H) * 0.72);
+    room.addColorStop(0, '#10101a');
+    room.addColorStop(0.55, '#0a0a12');
+    room.addColorStop(1, '#050508');
     ctx.fillStyle = room;
     ctx.fillRect(0, 0, W, H);
 
-    ctx.imageSmoothingEnabled = true;
-    ctx.drawImage(field, L.boxX, L.boxY, L.boxW, L.boxH);
+    // fused bodies first (bridges), then droplets with their cores
+    var drawn = [];
+    for (var c2 = 0; c2 < 6; c2++) {
+      for (var b2 = 0; b2 < 4; b2++) {
+        var cl = state[c2][b2];
+        if (cl.amt <= 0.02) continue;
+        var R = r * 0.96 * cl.amt * (1 + 0.15 * cl.pop);
+        drawn.push({ c: c2, b: b2, x: cl.x, y: cl.y, R: R, amt: cl.amt, pop: cl.pop });
+      }
+    }
+    // bridges between droplets whose centres are within 1.9 R
+    ctx.lineCap = 'round';
+    for (var i = 0; i < drawn.length; i++) {
+      for (var j = i + 1; j < drawn.length; j++) {
+        var A = drawn[i], B = drawn[j];
+        var d = Math.hypot(A.x - B.x, A.y - B.y);
+        var rr = Math.min(A.R, B.R);
+        if (d < rr * 1.86 && d > 1) {
+          // rim pass
+          ctx.strokeStyle = 'rgba(146,64,8,0.9)';
+          ctx.lineWidth = rr * 1.88 + Math.max(1.5, rr * 0.08);
+          ctx.beginPath(); ctx.moveTo(A.x, A.y); ctx.lineTo(B.x, B.y); ctx.stroke();
+          // fill pass
+          var bg = ctx.createLinearGradient(A.x, A.y - rr, A.x, A.y + rr);
+          bg.addColorStop(0, '#ffb84f');
+          bg.addColorStop(1, '#e07f16');
+          ctx.strokeStyle = bg;
+          ctx.lineWidth = rr * 1.88;
+          ctx.beginPath(); ctx.moveTo(A.x, A.y); ctx.lineTo(B.x, B.y); ctx.stroke();
+        }
+      }
+    }
+    drawn.forEach(function (d) { drawDrop(d.x, d.y, d.R); });
 
-    // gloss: one tight highlight per droplet, clipped by nothing but
-    // small enough to sit inside the body
-    ctx.save();
-    ctx.globalCompositeOperation = 'lighter';
-    drops.forEach(function (d) {
-      var gg = ctx.createRadialGradient(d.x - d.R * 0.30, d.y - d.R * 0.36, 0, d.x - d.R * 0.30, d.y - d.R * 0.36, d.R * 0.5);
-      gg.addColorStop(0, 'rgba(255,246,220,' + (0.16 * d.amt) + ')');
-      gg.addColorStop(1, 'rgba(255,246,220,0)');
-      ctx.fillStyle = gg;
-      ctx.beginPath();
-      ctx.arc(d.x - d.R * 0.30, d.y - d.R * 0.36, d.R * 0.5, 0, 6.283);
-      ctx.fill();
+    // colon: two crisp beads that pulse, 2048-spawn style
+    var pulse = 0.5 + 0.5 * Math.sin(now / 1000 * Math.PI);
+    [1, 3].forEach(function (li) {
+      var cxp = (L0.xs[li] + L0.xs[li + 1]) / 2;
+      [-0.55, 0.55].forEach(function (off) {
+        var rr = r * (0.20 + 0.05 * pulse);
+        drawDrop(cxp, L0.cy + off * r * 1.05, rr);
+      });
     });
-    ctx.restore();
 
     // reflections pooled under each column
     for (var c3 = 0; c3 < 6; c3++) {
       var glowAmt = 0;
       for (var b3 = 0; b3 < 4; b3++) glowAmt += state[c3][b3].amt;
       if (glowAmt <= 0.02) continue;
-      var gx = L.xs[c3], gy = L.gridBot + r * 1.15;
+      var gx = L0.xs[c3], gy = L0.gridBot + r * 1.15;
       var refl = ctx.createRadialGradient(gx, gy, 0, gx, gy, r * 1.5);
       refl.addColorStop(0, 'rgba(255,178,92,' + (0.05 + 0.03 * glowAmt) + ')');
       refl.addColorStop(1, 'rgba(255,178,92,0)');
@@ -312,11 +350,12 @@
       ctx.textAlign = 'center';
       ctx.textBaseline = 'top';
       for (var c4 = 0; c4 < 6; c4++) {
-        ctx.fillText(String(digs[c4]), L.xs[c4], L.gridBot + r * 0.85);
+        ctx.fillText(String(digs[c4]), L0.xs[c4], L0.gridBot + r * 0.85);
       }
     }
     requestAnimationFrame(frame);
   }
+  resize();
   requestAnimationFrame(frame);
 })();
 </script>

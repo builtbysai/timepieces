@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Fluid — the time runs together</title>
+<style>
+  html, body { margin: 0; padding: 0; height: 100%; background: #060608; overflow: hidden; }
+  body { -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent; }
+  canvas { display: block; width: 100vw; height: 100vh; touch-action: manipulation; }
+</style>
+</head>
+<body>
+<canvas id="cv"></canvas>
+<script>
+(function () {
+  'use strict';
+  // FLUID — a binary clock in liquid light. Timepieces № 08.
+  // Six columns (hours, minutes, seconds; two digits each), four rows
+  // of bits (8 4 2 1, bottom-aligned). A lit bit is a droplet of warm
+  // liquid light. The droplets are one scalar field: each contributes
+  // a soft falloff, the field is drawn, then a threshold turns it into
+  // bodies — and where two droplets come close, their fields sum over
+  // the threshold between them first, so a neck forms, pulls taut,
+  // and they merge into one body, the way real drops do. A droplet
+  // that lights gathers with a spring and a wobble; one that goes
+  // dark is sucked back down. Lit neighbours lean toward each other,
+  // the way two drops on glass reach before they touch.
+  // Tap: show or hide the small decimal digits under each column.
+
+  var canvas = document.getElementById('cv');
+  var ctx = canvas.getContext('2d');
+  var field = document.createElement('canvas');
+  var fctx = field.getContext('2d', { willReadFrequently: true });
+  var W = 0, H = 0, DPR = 1, FS = 0.5;
+
+  var params = new URLSearchParams(location.search);
+  var freezeT = params.has('t') ? parseInt(params.get('t'), 10) : null;
+  var pinGrow = params.has('grow');
+
+  var BITS = [8, 4, 2, 1];
+  var state = [];
+  var showDigits = true;
+
+  function blankState(h, m, s) {
+    var digs = [
+      Math.floor(h / 10), h % 10,
+      Math.floor(m / 10), m % 10,
+      Math.floor(s / 10), s % 10
+    ];
+    var st = [];
+    for (var c = 0; c < 6; c++) {
+      var col = [];
+      for (var b = 0; b < 4; b++) {
+        var on = (digs[c] & BITS[b]) !== 0;
+        col.push({ on: on, amt: on ? 1 : 0, vel: 0, wob: Math.random() * 6.28 });
+      }
+      st.push(col);
+    }
+    return st;
+  }
+
+  function nowHMS() {
+    if (freezeT !== null) {
+      var t = ((freezeT % 86400) + 86400) % 86400;
+      return [Math.floor(t / 3600), Math.floor(t / 60) % 60, t % 60];
+    }
+    var d = new Date();
+    return [d.getHours(), d.getMinutes(), d.getSeconds()];
+  }
+
+  var hms = nowHMS();
+  state = blankState(hms[0], hms[1], hms[2]);
+
+  function resize() {
+    DPR = Math.min(2, window.devicePixelRatio || 1);
+    W = window.innerWidth;
+    H = window.innerHeight;
+    canvas.width = Math.round(W * DPR);
+    canvas.height = Math.round(H * DPR);
+    FS = (W * H > 900000) ? 0.4 : 0.5;
+    field.width = Math.max(2, Math.round(W * FS));
+    field.height = Math.max(2, Math.round(H * FS));
+  }
+  window.addEventListener('resize', resize);
+  resize();
+
+  canvas.addEventListener('pointerdown', function () { showDigits = !showDigits; });
+
+  function layout() {
+    var portrait = H >= W;
+    var cellR = portrait ? Math.min(W * 0.056, H * 0.040) : Math.min(H * 0.056, W * 0.028);
+    var rowGap = cellR * 2.24;
+    var colGapIn = cellR * 2.28;
+    var colGapPair = cellR * 3.30;
+    var totalW = colGapIn * 3 + colGapPair * 2;
+    var x0 = (W - totalW) / 2;
+    var gridH = rowGap * 3;
+    var cy = H * 0.46;
+    var yTop = cy - gridH / 2;
+    var xs = [], ys = [];
+    for (var c = 0; c < 6; c++) {
+      xs.push(x0 + Math.floor(c / 2) * (colGapIn + colGapPair) + (c % 2) * colGapIn);
+    }
+    for (var b = 0; b < 4; b++) ys.push(yTop + b * rowGap);
+    return { cellR: cellR, xs: xs, ys: ys, cy: cy, gridBot: yTop + gridH };
+  }
+
+  function tickTargets() {
+    var t = nowHMS();
+    var digs = [
+      Math.floor(t[0] / 10), t[0] % 10,
+      Math.floor(t[1] / 10), t[1] % 10,
+      Math.floor(t[2] / 10), t[2] % 10
+    ];
+    for (var c = 0; c < 6; c++) {
+      for (var b = 0; b < 4; b++) {
+        state[c][b].on = (digs[c] & BITS[b]) !== 0;
+      }
+    }
+    return t;
+  }
+
+  // amber shading from field strength: deep edge -> amber -> hot core
+  function shade(f, out, i) {
+    var r, g, b;
+    if (f < 0.5) {
+      var u = f * 2;
+      r = 198 + (247 - 198) * u;
+      g = 92 + (164 - 92) * u;
+      b = 18 + (58 - 18) * u;
+    } else {
+      var v = (f - 0.5) * 2;
+      r = 247 + (255 - 247) * v;
+      g = 164 + (219 - 164) * v;
+      b = 58 + (150 - 58) * v;
+    }
+    out[i] = r; out[i + 1] = g; out[i + 2] = b;
+  }
+
+  var last = performance.now();
+
+  function frame(now) {
+    var dt = Math.min(0.05, (now - last) / 1000);
+    last = now;
+    var t = tickTargets();
+    var L = layout();
+    var r = L.cellR;
+
+    // droplet springs: underdamped, so lighting overshoots and settles
+    for (var c = 0; c < 6; c++) {
+      for (var b = 0; b < 4; b++) {
+        var cell = state[c][b];
+        var target = cell.on ? 1 : 0;
+        var acc = (target - cell.amt) * 90 - cell.vel * 11;
+        cell.vel += acc * dt;
+        cell.amt += cell.vel * dt;
+        if (cell.amt < 0) { cell.amt = 0; cell.vel *= -0.3; }
+      }
+    }
+    if (pinGrow) { state[5][2].amt = 0.55; state[5][2].on = true; }
+
+    // ---------- field pass (small canvas, white falloffs) ----------
+    var fw = field.width, fh = field.height;
+    fctx.clearRect(0, 0, fw, fh);
+    fctx.globalCompositeOperation = 'lighter';
+    var drops = [];
+    for (var c2 = 0; c2 < 6; c2++) {
+      for (var b2 = 0; b2 < 4; b2++) {
+        var cl = state[c2][b2];
+        if (cl.amt <= 0.01) continue;
+        var x = L.xs[c2], y = L.ys[b2];
+        var leanX = 0, leanY = 0;
+        if (b2 > 0 && state[c2][b2 - 1].amt > 0.5) leanY -= r * 0.10 * cl.amt;
+        if (b2 < 3 && state[c2][b2 + 1].amt > 0.5) leanY += r * 0.10 * cl.amt;
+        if (c2 % 2 === 0 && state[c2 + 1][b2].amt > 0.5) leanX += r * 0.08 * cl.amt;
+        if (c2 % 2 === 1 && state[c2 - 1][b2].amt > 0.5) leanX -= r * 0.08 * cl.amt;
+        var wob = 1 + 0.05 * Math.sin(now / 480 + cl.wob) * cl.amt;
+        var R = r * (0.22 + 0.88 * cl.amt) * wob;
+        drops.push({ x: x + leanX, y: y + leanY, R: R, amt: cl.amt });
+        var fx = (x + leanX) * FS, fy = (y + leanY) * FS, fr = R * 1.55 * FS;
+        var g = fctx.createRadialGradient(fx, fy, 0, fx, fy, fr);
+        g.addColorStop(0, 'rgba(255,255,255,0.85)');
+        g.addColorStop(0.55, 'rgba(255,255,255,0.38)');
+        g.addColorStop(1, 'rgba(255,255,255,0)');
+        fctx.fillStyle = g;
+        fctx.beginPath();
+        fctx.arc(fx, fy, fr, 0, 6.283);
+        fctx.fill();
+      }
+    }
+    // colon beads join the same field
+    var pulse = 0.72 + 0.28 * Math.sin(now / 1000 * Math.PI);
+    [1, 3].forEach(function (li) {
+      var cxp = (L.xs[li] + L.xs[li + 1]) / 2;
+      [-0.55, 0.55].forEach(function (off) {
+        var fx = cxp * FS, fy = (L.cy + off * r * 1.05) * FS, fr = r * 0.34 * pulse * 1.55 * FS;
+        var g = fctx.createRadialGradient(fx, fy, 0, fx, fy, fr);
+        g.addColorStop(0, 'rgba(255,255,255,0.8)');
+        g.addColorStop(1, 'rgba(255,255,255,0)');
+        fctx.fillStyle = g;
+        fctx.beginPath();
+        fctx.arc(fx, fy, fr, 0, 6.283);
+        fctx.fill();
+      });
+    });
+    fctx.globalCompositeOperation = 'source-over';
+
+    // ---------- threshold + shade ----------
+    var img = fctx.getImageData(0, 0, fw, fh);
+    var px = img.data;
+    var TH = 90, SOFT = 60;
+    for (var i = 0; i < px.length; i += 4) {
+      var a = px[i + 3];
+      if (a <= TH - SOFT) { px[i + 3] = 0; continue; }
+      var f = (a - (TH - SOFT)) / (255 - (TH - SOFT));
+      if (f > 1) f = 1;
+      var edge = (a - TH) / SOFT;
+      if (edge > 1) edge = 1;
+      if (edge < 0) edge = 0;
+      px[i + 3] = Math.round(255 * (edge * edge * (3 - 2 * edge)));
+      shade(f, px, i);
+    }
+    fctx.putImageData(img, 0, 0);
+
+    // ---------- main pass ----------
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    var room = ctx.createRadialGradient(W / 2, L.cy, 0, W / 2, L.cy, Math.max(W, H) * 0.72);
+    room.addColorStop(0, '#0e0e14');
+    room.addColorStop(0.55, '#090910');
+    room.addColorStop(1, '#050507');
+    ctx.fillStyle = room;
+    ctx.fillRect(0, 0, W, H);
+
+    // soft halo under the liquid (unthresholded, faint)
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    drops.forEach(function (d) {
+      var hg = ctx.createRadialGradient(d.x, d.y, 0, d.x, d.y, d.R * 2.1);
+      hg.addColorStop(0, 'rgba(255,166,66,' + (0.10 * d.amt) + ')');
+      hg.addColorStop(1, 'rgba(255,166,66,0)');
+      ctx.fillStyle = hg;
+      ctx.beginPath();
+      ctx.arc(d.x, d.y, d.R * 2.1, 0, 6.283);
+      ctx.fill();
+    });
+    ctx.restore();
+
+    ctx.imageSmoothingEnabled = true;
+    ctx.drawImage(field, 0, 0, W, H);
+
+    // gloss: a small soft highlight high on each droplet
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    drops.forEach(function (d) {
+      var gg = ctx.createRadialGradient(d.x - d.R * 0.30, d.y - d.R * 0.36, 0, d.x - d.R * 0.30, d.y - d.R * 0.36, d.R * 0.55);
+      gg.addColorStop(0, 'rgba(255,246,220,' + (0.20 * d.amt) + ')');
+      gg.addColorStop(1, 'rgba(255,246,220,0)');
+      ctx.fillStyle = gg;
+      ctx.beginPath();
+      ctx.arc(d.x - d.R * 0.30, d.y - d.R * 0.36, d.R * 0.55, 0, 6.283);
+      ctx.fill();
+    });
+    ctx.restore();
+
+    // reflections pooled under each column
+    for (var c3 = 0; c3 < 6; c3++) {
+      var glowAmt = 0;
+      for (var b3 = 0; b3 < 4; b3++) glowAmt += state[c3][b3].amt;
+      if (glowAmt <= 0.02) continue;
+      var gx = L.xs[c3], gy = L.gridBot + r * 1.15;
+      var refl = ctx.createRadialGradient(gx, gy, 0, gx, gy, r * 1.5);
+      refl.addColorStop(0, 'rgba(255,178,92,' + (0.05 + 0.03 * glowAmt) + ')');
+      refl.addColorStop(1, 'rgba(255,178,92,0)');
+      ctx.fillStyle = refl;
+      ctx.beginPath();
+      ctx.ellipse(gx, gy, r * 1.5, r * 0.42, 0, 0, 6.283);
+      ctx.fill();
+    }
+
+    if (showDigits) {
+      var digs = [
+        Math.floor(t[0] / 10), t[0] % 10,
+        Math.floor(t[1] / 10), t[1] % 10,
+        Math.floor(t[2] / 10), t[2] % 10
+      ];
+      ctx.fillStyle = 'rgba(214,204,188,0.5)';
+      ctx.font = '500 ' + Math.round(r * 0.52) + 'px ui-monospace, Menlo, Consolas, monospace';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'top';
+      for (var c4 = 0; c4 < 6; c4++) {
+        ctx.fillText(String(digs[c4]), L.xs[c4], L.gridBot + r * 0.85);
+      }
+    }
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

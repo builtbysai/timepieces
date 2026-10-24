@@ -16,23 +16,34 @@
 (function () {
   'use strict';
   // FLUID — a binary clock in liquid light. Timepieces № 08.
+  //
+  // Research notes (2026-10-23 rebuild):
+  // * Binary clocks that work (the Berlin Mengenlehreuhr above all)
+  //   use hard-edged fields on a strict grid. Every lamp stays a
+  //   distinct, countable unit; nothing blurs. A fluid version has to
+  //   keep that discipline: bits you can count, edges you can see.
+  // * Real droplet coalescence is never blurry either. Two drops are
+  //   sharp bodies until the film between them ruptures; then a
+  //   liquid bridge appears and grows fast (radius ~ t^1/2 in the
+  //   inertial regime), and the merged body oscillates, damped, into
+  //   its resting shape. The interface is the sharpest thing in the
+  //   picture at every instant.
+  // So: the field is computed at full resolution over the clock's own
+  // box and thresholded HARD (a two-pixel edge, with a darker rim just
+  // inside the contour, like a meniscus). Each droplet keeps a bright
+  // core, so inside a merged body you can still count the bits. When
+  // a droplet lights next to a lit neighbour the bridge snaps in
+  // quickly, and the whole cluster gets a damped wobble, the way a
+  // merged drop rings before it settles.
+  //
   // Six columns (hours, minutes, seconds; two digits each), four rows
-  // of bits (8 4 2 1, bottom-aligned). A lit bit is a droplet of warm
-  // liquid light. The droplets are one scalar field: each contributes
-  // a soft falloff, the field is drawn, then a threshold turns it into
-  // bodies — and where two droplets come close, their fields sum over
-  // the threshold between them first, so a neck forms, pulls taut,
-  // and they merge into one body, the way real drops do. A droplet
-  // that lights gathers with a spring and a wobble; one that goes
-  // dark is sucked back down. Lit neighbours lean toward each other,
-  // the way two drops on glass reach before they touch.
-  // Tap: show or hide the small decimal digits under each column.
+  // of bits (8 4 2 1). Tap toggles the small decimal digits.
 
   var canvas = document.getElementById('cv');
   var ctx = canvas.getContext('2d');
   var field = document.createElement('canvas');
   var fctx = field.getContext('2d', { willReadFrequently: true });
-  var W = 0, H = 0, DPR = 1, FS = 0.5;
+  var W = 0, H = 0, DPR = 1;
 
   var params = new URLSearchParams(location.search);
   var freezeT = params.has('t') ? parseInt(params.get('t'), 10) : null;
@@ -53,7 +64,7 @@
       var col = [];
       for (var b = 0; b < 4; b++) {
         var on = (digs[c] & BITS[b]) !== 0;
-        col.push({ on: on, amt: on ? 1 : 0, vel: 0, wob: Math.random() * 6.28 });
+        col.push({ on: on, amt: on ? 1 : 0, vel: 0, wob: Math.random() * 6.28, kick: 0, born: -1e9 });
       }
       st.push(col);
     }
@@ -78,9 +89,6 @@
     H = window.innerHeight;
     canvas.width = Math.round(W * DPR);
     canvas.height = Math.round(H * DPR);
-    FS = (W * H > 900000) ? 0.4 : 0.5;
-    field.width = Math.max(2, Math.round(W * FS));
-    field.height = Math.max(2, Math.round(H * FS));
   }
   window.addEventListener('resize', resize);
   resize();
@@ -90,8 +98,8 @@
   function layout() {
     var portrait = H >= W;
     var cellR = portrait ? Math.min(W * 0.056, H * 0.040) : Math.min(H * 0.056, W * 0.028);
-    var rowGap = cellR * 2.24;
-    var colGapIn = cellR * 2.28;
+    var rowGap = cellR * 2.20;
+    var colGapIn = cellR * 2.24;
     var colGapPair = cellR * 3.30;
     var totalW = colGapIn * 3 + colGapPair * 2;
     var x0 = (W - totalW) / 2;
@@ -103,10 +111,15 @@
       xs.push(x0 + Math.floor(c / 2) * (colGapIn + colGapPair) + (c % 2) * colGapIn);
     }
     for (var b = 0; b < 4; b++) ys.push(yTop + b * rowGap);
-    return { cellR: cellR, xs: xs, ys: ys, cy: cy, gridBot: yTop + gridH };
+    var pad = cellR * 2.6;
+    return {
+      cellR: cellR, xs: xs, ys: ys, cy: cy, gridBot: yTop + gridH,
+      boxX: xs[0] - pad, boxY: ys[0] - pad,
+      boxW: (xs[5] - xs[0]) + pad * 2, boxH: (ys[3] - ys[0]) + pad * 2
+    };
   }
 
-  function tickTargets() {
+  function tickTargets(now) {
     var t = nowHMS();
     var digs = [
       Math.floor(t[0] / 10), t[0] % 10,
@@ -115,25 +128,42 @@
     ];
     for (var c = 0; c < 6; c++) {
       for (var b = 0; b < 4; b++) {
-        state[c][b].on = (digs[c] & BITS[b]) !== 0;
+        var cell = state[c][b];
+        var on = (digs[c] & BITS[b]) !== 0;
+        if (on !== cell.on) {
+          cell.on = on;
+          if (on) cell.born = now;
+          // a change rings the cluster: the flipped droplet and its
+          // lit neighbours take a wobble kick
+          cell.kick = 1;
+          if (b > 0) state[c][b - 1].kick = Math.max(state[c][b - 1].kick, 0.8);
+          if (b < 3) state[c][b + 1].kick = Math.max(state[c][b + 1].kick, 0.8);
+          if (c % 2 === 0) state[c + 1][b].kick = Math.max(state[c + 1][b].kick, 0.6);
+          else state[c - 1][b].kick = Math.max(state[c - 1][b].kick, 0.6);
+        }
       }
     }
     return t;
   }
 
-  // amber shading from field strength: deep edge -> amber -> hot core
+  // shading by field strength: dark rim -> deep amber -> amber -> hot core
   function shade(f, out, i) {
     var r, g, b;
-    if (f < 0.5) {
-      var u = f * 2;
-      r = 198 + (247 - 198) * u;
-      g = 92 + (164 - 92) * u;
-      b = 18 + (58 - 18) * u;
+    if (f < 0.16) {           // the rim: just inside the contour
+      var u = f / 0.16;
+      r = 148 + (196 - 148) * u;
+      g = 62 + (94 - 62) * u;
+      b = 10 + (18 - 10) * u;
+    } else if (f < 0.55) {
+      var v = (f - 0.16) / 0.39;
+      r = 196 + (247 - 196) * v;
+      g = 94 + (164 - 94) * v;
+      b = 18 + (58 - 18) * v;
     } else {
-      var v = (f - 0.5) * 2;
-      r = 247 + (255 - 247) * v;
-      g = 164 + (219 - 164) * v;
-      b = 58 + (150 - 58) * v;
+      var w = (f - 0.55) / 0.45;
+      r = 247 + (255 - 247) * w;
+      g = 164 + (221 - 164) * w;
+      b = 58 + (156 - 58) * w;
     }
     out[i] = r; out[i + 1] = g; out[i + 2] = b;
   }
@@ -143,25 +173,31 @@
   function frame(now) {
     var dt = Math.min(0.05, (now - last) / 1000);
     last = now;
-    var t = tickTargets();
+    var t = tickTargets(now);
     var L = layout();
     var r = L.cellR;
 
-    // droplet springs: underdamped, so lighting overshoots and settles
+    // droplet springs (underdamped) + decaying cluster wobble
     for (var c = 0; c < 6; c++) {
       for (var b = 0; b < 4; b++) {
         var cell = state[c][b];
         var target = cell.on ? 1 : 0;
-        var acc = (target - cell.amt) * 90 - cell.vel * 11;
+        var stiff = (target > cell.amt) ? 150 : 90;   // bridges snap in fast
+        var acc = (target - cell.amt) * stiff - cell.vel * 12;
         cell.vel += acc * dt;
         cell.amt += cell.vel * dt;
         if (cell.amt < 0) { cell.amt = 0; cell.vel *= -0.3; }
+        cell.kick *= Math.exp(-dt * 2.6);
       }
     }
-    if (pinGrow) { state[5][2].amt = 0.55; state[5][2].on = true; }
+    if (pinGrow) { state[5][2].amt = 0.55; state[5][2].on = true; state[5][2].kick = 0.7; }
 
-    // ---------- field pass (small canvas, white falloffs) ----------
-    var fw = field.width, fh = field.height;
+    // ---------- field over the clock's box, near full resolution ----
+    var FS = 1;
+    var bw = Math.round(L.boxW), bh = Math.round(L.boxH);
+    if (bw * bh > 520000) FS = Math.sqrt(520000 / (bw * bh));
+    var fw = Math.max(2, Math.round(bw * FS)), fh = Math.max(2, Math.round(bh * FS));
+    if (field.width !== fw || field.height !== fh) { field.width = fw; field.height = fh; }
     fctx.clearRect(0, 0, fw, fh);
     fctx.globalCompositeOperation = 'lighter';
     var drops = [];
@@ -171,17 +207,18 @@
         if (cl.amt <= 0.01) continue;
         var x = L.xs[c2], y = L.ys[b2];
         var leanX = 0, leanY = 0;
-        if (b2 > 0 && state[c2][b2 - 1].amt > 0.5) leanY -= r * 0.10 * cl.amt;
-        if (b2 < 3 && state[c2][b2 + 1].amt > 0.5) leanY += r * 0.10 * cl.amt;
-        if (c2 % 2 === 0 && state[c2 + 1][b2].amt > 0.5) leanX += r * 0.08 * cl.amt;
-        if (c2 % 2 === 1 && state[c2 - 1][b2].amt > 0.5) leanX -= r * 0.08 * cl.amt;
-        var wob = 1 + 0.05 * Math.sin(now / 480 + cl.wob) * cl.amt;
-        var R = r * (0.22 + 0.88 * cl.amt) * wob;
+        if (b2 > 0 && state[c2][b2 - 1].amt > 0.5) leanY -= r * 0.09 * cl.amt;
+        if (b2 < 3 && state[c2][b2 + 1].amt > 0.5) leanY += r * 0.09 * cl.amt;
+        if (c2 % 2 === 0 && state[c2 + 1][b2].amt > 0.5) leanX += r * 0.07 * cl.amt;
+        if (c2 % 2 === 1 && state[c2 - 1][b2].amt > 0.5) leanX -= r * 0.07 * cl.amt;
+        var wob = 1 + 0.028 * Math.sin(now / 520 + cl.wob) * cl.amt
+                    + 0.075 * cl.kick * Math.sin(now / 68 + cl.wob * 3);
+        var R = r * (0.22 + 0.86 * cl.amt) * wob;
         drops.push({ x: x + leanX, y: y + leanY, R: R, amt: cl.amt });
-        var fx = (x + leanX) * FS, fy = (y + leanY) * FS, fr = R * 1.55 * FS;
+        var fx = (x + leanX - L.boxX) * FS, fy = (y + leanY - L.boxY) * FS, fr = R * 1.52 * FS;
         var g = fctx.createRadialGradient(fx, fy, 0, fx, fy, fr);
-        g.addColorStop(0, 'rgba(255,255,255,0.85)');
-        g.addColorStop(0.55, 'rgba(255,255,255,0.38)');
+        g.addColorStop(0, 'rgba(255,255,255,0.88)');
+        g.addColorStop(0.55, 'rgba(255,255,255,0.40)');
         g.addColorStop(1, 'rgba(255,255,255,0)');
         fctx.fillStyle = g;
         fctx.beginPath();
@@ -189,14 +226,13 @@
         fctx.fill();
       }
     }
-    // colon beads join the same field
     var pulse = 0.72 + 0.28 * Math.sin(now / 1000 * Math.PI);
     [1, 3].forEach(function (li) {
       var cxp = (L.xs[li] + L.xs[li + 1]) / 2;
       [-0.55, 0.55].forEach(function (off) {
-        var fx = cxp * FS, fy = (L.cy + off * r * 1.05) * FS, fr = r * 0.34 * pulse * 1.55 * FS;
+        var fx = (cxp - L.boxX) * FS, fy = (L.cy + off * r * 1.05 - L.boxY) * FS, fr = r * 0.42 * pulse * 1.5 * FS;
         var g = fctx.createRadialGradient(fx, fy, 0, fx, fy, fr);
-        g.addColorStop(0, 'rgba(255,255,255,0.8)');
+        g.addColorStop(0, 'rgba(255,255,255,0.82)');
         g.addColorStop(1, 'rgba(255,255,255,0)');
         fctx.fillStyle = g;
         fctx.beginPath();
@@ -206,19 +242,19 @@
     });
     fctx.globalCompositeOperation = 'source-over';
 
-    // ---------- threshold + shade ----------
+    // ---------- HARD threshold: a two-pixel edge, rim inside --------
     var img = fctx.getImageData(0, 0, fw, fh);
     var px = img.data;
-    var TH = 90, SOFT = 60;
+    var TH = 104, SOFT = 13;
     for (var i = 0; i < px.length; i += 4) {
       var a = px[i + 3];
       if (a <= TH - SOFT) { px[i + 3] = 0; continue; }
       var f = (a - (TH - SOFT)) / (255 - (TH - SOFT));
       if (f > 1) f = 1;
-      var edge = (a - TH) / SOFT;
-      if (edge > 1) edge = 1;
-      if (edge < 0) edge = 0;
-      px[i + 3] = Math.round(255 * (edge * edge * (3 - 2 * edge)));
+      var e = (a - TH) / SOFT;
+      if (e > 1) e = 1;
+      if (e < 0) e = 0;
+      px[i + 3] = Math.round(255 * e);
       shade(f, px, i);
     }
     fctx.putImageData(img, 0, 0);
@@ -232,33 +268,20 @@
     ctx.fillStyle = room;
     ctx.fillRect(0, 0, W, H);
 
-    // soft halo under the liquid (unthresholded, faint)
-    ctx.save();
-    ctx.globalCompositeOperation = 'lighter';
-    drops.forEach(function (d) {
-      var hg = ctx.createRadialGradient(d.x, d.y, 0, d.x, d.y, d.R * 2.1);
-      hg.addColorStop(0, 'rgba(255,166,66,' + (0.10 * d.amt) + ')');
-      hg.addColorStop(1, 'rgba(255,166,66,0)');
-      ctx.fillStyle = hg;
-      ctx.beginPath();
-      ctx.arc(d.x, d.y, d.R * 2.1, 0, 6.283);
-      ctx.fill();
-    });
-    ctx.restore();
-
     ctx.imageSmoothingEnabled = true;
-    ctx.drawImage(field, 0, 0, W, H);
+    ctx.drawImage(field, L.boxX, L.boxY, L.boxW, L.boxH);
 
-    // gloss: a small soft highlight high on each droplet
+    // gloss: one tight highlight per droplet, clipped by nothing but
+    // small enough to sit inside the body
     ctx.save();
     ctx.globalCompositeOperation = 'lighter';
     drops.forEach(function (d) {
-      var gg = ctx.createRadialGradient(d.x - d.R * 0.30, d.y - d.R * 0.36, 0, d.x - d.R * 0.30, d.y - d.R * 0.36, d.R * 0.55);
-      gg.addColorStop(0, 'rgba(255,246,220,' + (0.20 * d.amt) + ')');
+      var gg = ctx.createRadialGradient(d.x - d.R * 0.30, d.y - d.R * 0.36, 0, d.x - d.R * 0.30, d.y - d.R * 0.36, d.R * 0.5);
+      gg.addColorStop(0, 'rgba(255,246,220,' + (0.16 * d.amt) + ')');
       gg.addColorStop(1, 'rgba(255,246,220,0)');
       ctx.fillStyle = gg;
       ctx.beginPath();
-      ctx.arc(d.x - d.R * 0.30, d.y - d.R * 0.36, d.R * 0.55, 0, 6.283);
+      ctx.arc(d.x - d.R * 0.30, d.y - d.R * 0.36, d.R * 0.5, 0, 6.283);
       ctx.fill();
     });
     ctx.restore();

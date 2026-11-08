@@ -4,20 +4,20 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <title>Rings</title>
-<!-- rings-no12 -->
+<!-- rings-no12-watercolor -->
 <style>
-html,body { margin:0; padding:0; height:100%; overflow:hidden; background:#14100b; touch-action:none; }
+html,body { margin:0; padding:0; height:100%; overflow:hidden; background:#f3ecdc; touch-action:none; }
 #stage { position:fixed; inset:0; display:block; }
-.corner { position:fixed; top:18px; left:20px; color:rgba(216,201,168,0.5);
-  font:10px/1.4 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+.corner { position:fixed; top:18px; left:20px; color:rgba(107,84,58,0.65);
+  font:11px/1.4 Georgia,'Times New Roman',serif;
   letter-spacing:0.28em; pointer-events:none; user-select:none; }
 .clock { position:fixed; left:0; right:0; bottom:max(20px, env(safe-area-inset-bottom));
-  text-align:center; color:rgba(216,201,168,0.85);
-  font:15px/1.4 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  text-align:center; color:rgba(107,84,58,0.9);
+  font:16px/1.4 Georgia,'Times New Roman',serif;
   letter-spacing:0.34em; pointer-events:none; user-select:none; }
-.hint { position:fixed; left:0; right:0; bottom:calc(max(20px, env(safe-area-inset-bottom)) + 30px);
-  text-align:center; color:rgba(216,201,168,0.4);
-  font:10px/1.4 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+.hint { position:fixed; left:0; right:0; bottom:calc(max(20px, env(safe-area-inset-bottom)) + 32px);
+  text-align:center; color:rgba(107,84,58,0.45);
+  font:11px/1.4 Georgia,'Times New Roman',serif;
   letter-spacing:0.22em; pointer-events:none; user-select:none;
   transition:opacity 1.2s ease; }
 </style>
@@ -29,15 +29,16 @@ html,body { margin:0; padding:0; height:100%; overflow:hidden; background:#14100
 <div class="clock" id="clock"></div>
 <script>
 'use strict';
-// Rings. The day as a tree cross-section. Twenty-four growth
-// rings, one per hour, radiating from the pith (midnight) out to
-// the bark (next midnight). Hours already lived are solid wood.
-// The current hour's ring grows as an arc, starting at the top
-// and sweeping clockwise through the minute; its leading tip is
-// the living cambium, a bright gold point. Hours not yet reached
-// are faint outlines, wood not yet grown. Count the solid rings
-// from the centre for the hour; the open arc's sweep is the
-// minute. Tap to show hour marks. ?hour=15.5 pins the time.
+// Rings, watercolor. The day as a tree stump in a meadow: a pale
+// wood disc with twenty-four growth rings, one per hour, pith at
+// midnight, bark at next midnight. Hours already lived are warm
+// honey wood. The current hour's ring grows as a golden arc from
+// the top, sweeping clockwise through the minute; its leading tip
+// is the living cambium, bright gold. Hours not yet reached are
+// faint pencil outlines, wood not yet grown. Two twig hands at
+// the centre read the time the ordinary way. Count the solid
+// rings from the centre for the hour; the open arc's sweep is
+// the minute. Tap to show hour marks. ?hour=15.5 pins the time.
 
 const canvas = document.getElementById('stage');
 const clockEl = document.getElementById('clock');
@@ -49,9 +50,10 @@ function viewportWH(){
 }
 const ctx = canvas.getContext('2d');
 
-const BG = '#14100b';
-const PALE = '216,201,168';
-const BARK = '#241708';
+const BG = '#f3ecdc';
+const INK = '107,84,58';           // warm brown ink for marks and text
+const BARK_DARK = '#5d4126';
+const BARK = '#7a5a38';
 
 let showLabels = false;
 let hintHidden = false;
@@ -79,6 +81,32 @@ function wobble(i, th, step) {
                + r.a3 * Math.sin(3 * th + r.p3));
 }
 
+// The meadow, seeded once so it never shivers between frames:
+// soft wash patches, grass tufts, fallen leaves, tiny flowers.
+// Grass/leaves/flowers store y as a fraction of the meadow band
+// (remapped at draw time so they never crowd the bottom text).
+const MEADOW = (() => {
+  const rnd = srand(20261108);
+  const washes = [];
+  for (let i = 0; i < 9; i++) washes.push({ x: rnd(), y: rnd(), r: 0.10 + rnd() * 0.16, c: i % 3 });
+  const grass = [];
+  for (let i = 0; i < 24; i++) grass.push({ x: rnd(), y: rnd(), h: 0.015 + rnd() * 0.02, lean: (rnd() - 0.5) * 0.12, blades: 2 + Math.floor(rnd() * 3) });
+  const leaves = [];
+  const LEAF_COLS = ['#d97b2e', '#e0a83c', '#8a9a4b', '#b45a2e', '#c98a3a'];
+  for (let i = 0; i < 16; i++) leaves.push({
+    x: rnd(), y: rnd(), s: 0.012 + rnd() * 0.016,
+    rot: rnd() * Math.PI * 2, maple: rnd() < 0.45, col: LEAF_COLS[Math.floor(rnd() * LEAF_COLS.length)]
+  });
+  const flowers = [];
+  for (let i = 0; i < 4; i++) flowers.push({ x: rnd(), y: rnd(), s: 0.006 + rnd() * 0.005, pink: rnd() < 0.5 });
+  const cracks = [];
+  for (let i = 0; i < 4; i++) cracks.push({ a: rnd() * Math.PI * 2, len: 0.35 + rnd() * 0.45 });
+  const speck = [];
+  for (let i = 0; i < 260; i++) speck.push({ x: rnd(), y: rnd(), r: 0.4 + rnd() * 1.1, a: 0.02 + rnd() * 0.05 });
+  return { washes, grass, leaves, flowers, cracks, speck };
+})();
+const WASH_COLS = ['rgba(223,227,200,0.5)', 'rgba(240,223,184,0.55)', 'rgba(232,220,192,0.5)'];
+
 function realHours() {
   const forced = parseFloat(new URLSearchParams(location.search).get('hour'));
   if (isFinite(forced)) return forced;
@@ -99,10 +127,94 @@ function ringPath(cx, cy, r, i, step, a0, a1) {
 }
 
 function woodColor(i, alpha) {
-  // warm honey amber, tone varies ring to ring like real growth
+  // warm honey, tone varies ring to ring like real growth
   const t = RINGS[i].tone;
-  const r = Math.round(196 * t), g = Math.round(138 * t), b = Math.round(74 * t);
+  const r = Math.round(198 * t), g = Math.round(150 * t), b = Math.round(92 * t);
   return 'rgba(' + r + ',' + g + ',' + b + ',' + alpha + ')';
+}
+
+function drawMapleLeaf(x, y, s, rot, col) {
+  // five-lobed maple leaf: notched silhouette, stem, centre vein
+  const PTS = [
+    [0, -1.0], [0.28, -0.62], [0.75, -0.75], [0.55, -0.35], [0.95, -0.15],
+    [0.5, 0.05], [0.55, 0.55], [0.2, 0.45], [0.12, 0.9], [0, 0.65],
+    [-0.12, 0.9], [-0.2, 0.45], [-0.55, 0.55], [-0.5, 0.05], [-0.95, -0.15],
+    [-0.55, -0.35], [-0.75, -0.75], [-0.28, -0.62]
+  ];
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(rot);
+  ctx.fillStyle = col;
+  ctx.beginPath();
+  ctx.moveTo(PTS[0][0] * s, PTS[0][1] * s);
+  for (let k = 1; k < PTS.length; k++) ctx.lineTo(PTS[k][0] * s, PTS[k][1] * s);
+  ctx.closePath();
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(90,64,38,0.5)';
+  ctx.lineWidth = Math.max(0.6, s * 0.05);
+  ctx.beginPath(); ctx.moveTo(0, s * 0.6); ctx.lineTo(0, s * 1.15); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(0, s * 0.5); ctx.lineTo(0, -s * 0.7); ctx.stroke();
+  // side veins to the two upper lobes: what makes it a leaf, not a star
+  ctx.beginPath(); ctx.moveTo(0, s * 0.45); ctx.lineTo(-s * 0.6, -s * 0.55); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(0, s * 0.45); ctx.lineTo(s * 0.6, -s * 0.55); ctx.stroke();
+  ctx.restore();
+}
+
+function drawOvalLeaf(x, y, s, rot, col) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(rot);
+  ctx.fillStyle = col;
+  ctx.beginPath();
+  ctx.ellipse(0, 0, s, s * 0.45, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(90,64,38,0.45)';
+  ctx.lineWidth = Math.max(0.6, s * 0.07);
+  ctx.beginPath(); ctx.moveTo(-s * 0.9, 0); ctx.lineTo(s * 0.9, 0); ctx.stroke();
+  ctx.restore();
+}
+
+function drawGrass(x, y, h, lean, blades) {
+  ctx.strokeStyle = 'rgba(125,143,87,0.8)';
+  ctx.lineWidth = Math.max(0.8, h * 0.05);
+  ctx.lineCap = 'round';
+  for (let b = 0; b < blades; b++) {
+    const off = (b - (blades - 1) / 2) * h * 0.3;
+    const bh = h * (0.7 + ((b * 37) % 10) / 25);   // blades differ in height
+    const tipX = x + off + lean * bh * 6 + (b % 2 ? bh * 0.18 : -bh * 0.18);
+    ctx.beginPath();
+    ctx.moveTo(x + off, y);
+    ctx.quadraticCurveTo(x + off + lean * bh * 3, y - bh * 0.6, tipX, y - bh);
+    ctx.stroke();
+  }
+}
+
+function drawFlower(x, y, s, pink) {
+  ctx.fillStyle = pink ? 'rgba(232,180,190,0.95)' : 'rgba(250,250,246,0.95)';
+  for (let k = 0; k < 5; k++) {
+    const a = -Math.PI / 2 + k * (Math.PI * 2 / 5);
+    ctx.beginPath();
+    ctx.arc(x + Math.cos(a) * s, y + Math.sin(a) * s, s * 0.55, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.fillStyle = '#e0a83c';
+  ctx.beginPath(); ctx.arc(x, y, s * 0.45, 0, Math.PI * 2); ctx.fill();
+}
+
+function drawTwigHand(cx, cy, len, angle, w) {
+  // a little twig: main stem, one fork near the tip, a knot at the base
+  const tipX = cx + Math.cos(angle) * len, tipY = cy + Math.sin(angle) * len;
+  const midX = cx + Math.cos(angle) * len * 0.62, midY = cy + Math.sin(angle) * len * 0.62;
+  ctx.strokeStyle = '#5a4026';
+  ctx.lineWidth = w;
+  ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(tipX, tipY); ctx.stroke();
+  const forkA = angle - 0.5, forkL = len * 0.22;
+  ctx.lineWidth = w * 0.6;
+  ctx.beginPath();
+  ctx.moveTo(midX, midY);
+  ctx.lineTo(midX + Math.cos(forkA) * forkL, midY + Math.sin(forkA) * forkL);
+  ctx.stroke();
 }
 
 function drawFrame(nowMs) {
@@ -125,30 +237,65 @@ function drawFrame(nowMs) {
   const minuteFrac = hrs - hour;                 // 0..1 through the hour
   const sec = new Date().getSeconds() + new Date().getMilliseconds() / 1000;
 
-  const cx = w / 2, cy = h * 0.46;               // cross-section centre, room below for the time
-  const maxR = Math.min(w, h) * 0.42;
+  const cx = w / 2, cy = h * 0.44;               // stump centre, room below for the time
+  const maxR = Math.min(w, h) * 0.40;
   const step = maxR / 25.5;                      // 24 rings + pith + bark margin
   const r0 = step * 1.6;                         // pith radius
   const ringR = i => r0 + i * step;
+  const SQUASH = 0.84;                           // the stump is seen at a slight tilt
 
-  // soft vignette so the cross-section sits in the dark
-  const vg = ctx.createRadialGradient(cx, cy, maxR * 0.4, cx, cy, Math.max(w, h) * 0.75);
-  vg.addColorStop(0, 'rgba(0,0,0,0)');
-  vg.addColorStop(1, 'rgba(0,0,0,0.42)');
+  // paper: soft watercolor washes and grain
+  for (const ws of MEADOW.washes) {
+    const g = ctx.createRadialGradient(ws.x * w, ws.y * h, 0, ws.x * w, ws.y * h, ws.r * Math.max(w, h));
+    g.addColorStop(0, WASH_COLS[ws.c]);
+    g.addColorStop(1, 'rgba(243,236,220,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, w, h);
+  }
+  for (const sp of MEADOW.speck) {
+    ctx.fillStyle = 'rgba(' + INK + ',' + sp.a + ')';
+    ctx.beginPath(); ctx.arc(sp.x * w, sp.y * h, sp.r, 0, Math.PI * 2); ctx.fill();
+  }
 
-  // future rings first: faint outlines, wood not yet grown
-  ctx.lineWidth = Math.max(1, step * 0.07);
-  for (let i = hour + 1; i < 24; i++) {
-    ringPath(cx, cy, ringR(i), i, step, 0, Math.PI * 2);
-    ctx.strokeStyle = 'rgba(' + PALE + ',0.10)';
+  // soft shadow under the stump, grounding it in the grass
+  ctx.fillStyle = 'rgba(90,70,40,0.16)';
+  ctx.beginPath();
+  ctx.ellipse(cx, cy + maxR * SQUASH * 1.02, maxR * 1.02, maxR * 0.16, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // the stump itself, drawn in circle coords inside a squash transform
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.scale(1, SQUASH);
+  ctx.translate(-cx, -cy);
+
+  // pale wood disc
+  ctx.fillStyle = '#eee3c8';
+  ctx.beginPath(); ctx.arc(cx, cy, ringR(23) + step * 0.85, 0, Math.PI * 2); ctx.fill();
+
+  // faint radial cracks, like dried wood
+  ctx.strokeStyle = 'rgba(' + INK + ',0.14)';
+  ctx.lineWidth = Math.max(0.7, step * 0.05);
+  for (const cr of MEADOW.cracks) {
+    ctx.beginPath();
+    ctx.moveTo(cx + Math.cos(cr.a) * step * 1.2, cy + Math.sin(cr.a) * step * 1.2);
+    ctx.lineTo(cx + Math.cos(cr.a) * ringR(23) * cr.len, cy + Math.sin(cr.a) * ringR(23) * cr.len);
     ctx.stroke();
   }
 
-  // lived rings: solid wood, each ring its own width and tone
+  // future rings first: faint pencil outlines, wood not yet grown
+  ctx.lineWidth = Math.max(1, step * 0.07);
+  for (let i = hour + 1; i < 24; i++) {
+    ringPath(cx, cy, ringR(i), i, step, 0, Math.PI * 2);
+    ctx.strokeStyle = 'rgba(' + INK + ',0.16)';
+    ctx.stroke();
+  }
+
+  // lived rings: solid warm wood, each ring its own width and tone
   for (let i = 0; i < hour; i++) {
     ringPath(cx, cy, ringR(i), i, step, 0, Math.PI * 2);
     ctx.lineWidth = step * RINGS[i].width;
-    ctx.strokeStyle = woodColor(i, 0.92);
+    ctx.strokeStyle = woodColor(i, 0.85);
     ctx.stroke();
   }
 
@@ -156,11 +303,16 @@ function drawFrame(nowMs) {
   const gi = hour;
   ringPath(cx, cy, ringR(gi), gi, step, 0, Math.PI * 2);
   ctx.lineWidth = Math.max(1, step * 0.07);
-  ctx.strokeStyle = 'rgba(' + PALE + ',0.10)';
+  ctx.strokeStyle = 'rgba(' + INK + ',0.16)';
   ctx.stroke();
 
   const a0 = -Math.PI / 2;                       // arc starts at the top
   const a1 = a0 + minuteFrac * Math.PI * 2;
+  // soft golden halo under the arc, then the arc itself
+  ringPath(cx, cy, ringR(gi), gi, step, a0, a1);
+  ctx.lineWidth = step * RINGS[gi].width * 1.9;
+  ctx.strokeStyle = 'rgba(232,169,60,0.28)';
+  ctx.stroke();
   ringPath(cx, cy, ringR(gi), gi, step, a0, a1);
   ctx.lineWidth = step * RINGS[gi].width;
   ctx.strokeStyle = woodColor(gi, 0.95);
@@ -170,7 +322,7 @@ function drawFrame(nowMs) {
   const tipR = ringR(gi) + wobble(gi, a1, step);
   const tx = cx + Math.cos(a1) * tipR, ty = cy + Math.sin(a1) * tipR;
   const pulse = 0.75 + 0.25 * Math.sin(sec * Math.PI * 2 / 2);   // slow 2s breath
-  const glowR = step * (0.9 + 0.35 * pulse);
+  const glowR = step * (1.1 + 0.4 * pulse);
   const glow = ctx.createRadialGradient(tx, ty, 0, tx, ty, glowR);
   glow.addColorStop(0, 'rgba(255,214,138,0.95)');
   glow.addColorStop(0.35, 'rgba(255,190,90,0.45)');
@@ -180,35 +332,71 @@ function drawFrame(nowMs) {
   ctx.fillStyle = '#ffe9bd';
   ctx.beginPath(); ctx.arc(tx, ty, Math.max(1.5, step * 0.16), 0, Math.PI * 2); ctx.fill();
 
-  // bark: a rough dark rind around the day
+  // bark: a rough brown rind around the day
   ringPath(cx, cy, ringR(23) + step * 0.85, 23, step * 1.6, 0, Math.PI * 2);
   ctx.lineWidth = step * 0.55;
-  ctx.strokeStyle = 'rgba(42,26,14,0.95)';
+  ctx.strokeStyle = 'rgba(122,90,56,0.95)';
   ctx.stroke();
   ringPath(cx, cy, ringR(23) + step * 1.18, 23, step * 1.6, 0, Math.PI * 2);
   ctx.lineWidth = Math.max(1, step * 0.10);
-  ctx.strokeStyle = 'rgba(20,12,6,0.9)';
+  ctx.strokeStyle = 'rgba(93,65,38,0.9)';
   ctx.stroke();
 
-  // pith: the dark knot at the centre, midnight
-  ctx.fillStyle = '#1d1206';
-  ctx.beginPath(); ctx.arc(cx, cy, step * 0.55, 0, Math.PI * 2); ctx.fill();
-  ctx.fillStyle = 'rgba(216,201,168,0.35)';
-  ctx.beginPath(); ctx.arc(cx - step * 0.12, cy - step * 0.12, step * 0.10, 0, Math.PI * 2); ctx.fill();
+  // pith: the small knot at the centre, midnight
+  ctx.fillStyle = '#6b4a26';
+  ctx.beginPath(); ctx.arc(cx, cy, step * 0.5, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = 'rgba(238,227,200,0.5)';
+  ctx.beginPath(); ctx.arc(cx - step * 0.12, cy - step * 0.12, step * 0.09, 0, Math.PI * 2); ctx.fill();
 
-  ctx.fillStyle = vg;
-  ctx.fillRect(0, 0, w, h);
+  // twig hands: hour short, minute long, both little twigs
+  const hourAngle = ((hrs % 12) / 12) * Math.PI * 2 - Math.PI / 2;
+  const minAngle = (minuteFrac) * Math.PI * 2 - Math.PI / 2;
+  drawTwigHand(cx, cy, maxR * 0.34, hourAngle, Math.max(2, step * 0.28));
+  drawTwigHand(cx, cy, maxR * 0.52, minAngle, Math.max(1.5, step * 0.22));
+  ctx.fillStyle = '#5a4026';
+  ctx.beginPath(); ctx.arc(cx, cy, Math.max(2, step * 0.22), 0, Math.PI * 2); ctx.fill();
 
   // hour marks, every third hour, along the top ray
   if (showLabels) {
-    ctx.fillStyle = 'rgba(' + PALE + ',0.75)';
-    ctx.font = Math.max(9, Math.round(step * 0.62)) + 'px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace';
+    ctx.fillStyle = 'rgba(' + INK + ',0.8)';
+    ctx.font = Math.max(9, Math.round(step * 0.62)) + 'px Georgia,\'Times New Roman\',serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     for (let hh = 0; hh < 24; hh += 3) {
       const rr = ringR(hh) + wobble(hh, -Math.PI / 2, step);
-      ctx.fillText(String(hh).padStart(2, '0'), cx, cy - rr - step * 0.55);
+      const lx = cx, ly = cy - rr - step * 0.55;
+      ctx.strokeStyle = 'rgba(243,236,220,0.92)';   // paper halo, legible over honey wood
+      ctx.lineWidth = 3;
+      ctx.strokeText(String(hh).padStart(2, '0'), lx, ly);
+      ctx.fillText(String(hh).padStart(2, '0'), lx, ly);
     }
+  }
+
+  ctx.restore();
+
+  // the meadow around the stump: grass, fallen leaves, tiny flowers.
+  // Band runs from the stump's lower sides down to clear of the bottom text.
+  const bandTop = cy + maxR * SQUASH * 0.55, bandBottom = h - 95;
+  const bandY = f => bandTop + f * Math.max(0, bandBottom - bandTop);
+  const onWood = (x, y) => {  // inside the stump disc, ellipse-space
+    const dx = (x - cx) / maxR, dy = (y - cy) / (maxR * SQUASH);
+    return Math.sqrt(dx * dx + dy * dy) < 1.06;
+  };
+  for (const gr of MEADOW.grass) {
+    const gx = gr.x * w, gy = bandY(gr.y);
+    if (onWood(gx, gy - gr.h * Math.max(w, h) * 0.5)) continue;  // not out of the wood
+    drawGrass(gx, gy, gr.h * Math.max(w, h), gr.lean, gr.blades);
+  }
+  for (const lf of MEADOW.leaves) {
+    const lx = lf.x * w, ly = bandY(lf.y);
+    if (onWood(lx, ly)) continue;  // leaves stay on the ground, never on the wood
+    if (lf.maple) drawMapleLeaf(lx, ly, lf.s * Math.max(w, h), lf.rot, lf.col);
+    else drawOvalLeaf(lx, ly, lf.s * Math.max(w, h), lf.rot, lf.col);
+  }
+  for (const fl of MEADOW.flowers) {
+    const fx = fl.x * w, fy = bandY(fl.y);
+    if (onWood(fx, fy)) continue;
+    drawFlower(fx, fy, fl.s * Math.max(w, h), fl.pink);
   }
 
   // the time, small and plain, bottom centre

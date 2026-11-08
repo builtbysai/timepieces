@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <title>Rings</title>
-<!-- rings-no12-watercolor -->
+<!-- rings-no12-cylinder -->
 <style>
 html,body { margin:0; padding:0; height:100%; overflow:hidden; background:#f3ecdc; touch-action:none; }
 #stage { position:fixed; inset:0; display:block; }
@@ -29,16 +29,18 @@ html,body { margin:0; padding:0; height:100%; overflow:hidden; background:#f3ecd
 <div class="clock" id="clock"></div>
 <script>
 'use strict';
-// Rings, watercolor. The day as a tree stump in a meadow: a pale
-// wood disc with twenty-four growth rings, one per hour, pith at
-// midnight, bark at next midnight. Hours already lived are warm
-// honey wood. The current hour's ring grows as a golden arc from
-// the top, sweeping clockwise through the minute; its leading tip
-// is the living cambium, bright gold. Hours not yet reached are
-// faint pencil outlines, wood not yet grown. Two twig hands at
-// the centre read the time the ordinary way. Count the solid
-// rings from the centre for the hour; the open arc's sweep is
-// the minute. Tap to show hour marks. ?hour=15.5 pins the time.
+// Rings, watercolor, after the reference: a cut log lying in a
+// meadow, seen at a low angle. The top face is a wide pale ellipse
+// with twenty-four fine growth rings, one per hour, pith at
+// midnight, bark at next midnight. Hours already lived are a
+// touch warmer; the current hour's ring is a thin bright gold arc
+// sweeping clockwise from the top through the minute, its leading
+// tip the living cambium. Hours not yet reached are faint pencil
+// lines, wood not yet grown. The log has a real bark side wall
+// below the face. Two delicate twig hands read the time the
+// ordinary way. Count the rings from the centre for the hour; the
+// open arc's sweep is the minute. Tap to show hour marks.
+// ?hour=15.5 pins the time.
 
 const canvas = document.getElementById('stage');
 const clockEl = document.getElementById('clock');
@@ -52,8 +54,6 @@ const ctx = canvas.getContext('2d');
 
 const BG = '#f3ecdc';
 const INK = '107,84,58';           // warm brown ink for marks and text
-const BARK_DARK = '#5d4126';
-const BARK = '#7a5a38';
 
 let showLabels = false;
 let hintHidden = false;
@@ -70,8 +70,7 @@ for (let i = 0; i < 24; i++) {
   const rnd = srand(101 + i * 37);
   RINGS.push({
     a3: 0.02 + rnd() * 0.03, p3: rnd() * Math.PI * 2,
-    tone: 0.82 + rnd() * 0.36,         // per-ring wood tone multiplier
-    width: 0.55 + rnd() * 0.12         // per-ring stroke width, in steps
+    tone: 0.85 + rnd() * 0.30
   });
 }
 function wobble(i, th, step) {
@@ -82,28 +81,35 @@ function wobble(i, th, step) {
 }
 
 // The meadow, seeded once so it never shivers between frames:
-// soft wash patches, grass tufts, fallen leaves, tiny flowers.
-// Grass/leaves/flowers store y as a fraction of the meadow band
-// (remapped at draw time so they never crowd the bottom text).
+// soft wash patches, moss bushes, grass tufts, fallen leaves,
+// tiny flowers, pebbles. Grass/leaves/flowers store y as a
+// fraction of the meadow band (remapped at draw time so they
+// never crowd the bottom text).
 const MEADOW = (() => {
   const rnd = srand(20261108);
   const washes = [];
-  for (let i = 0; i < 9; i++) washes.push({ x: rnd(), y: rnd(), r: 0.10 + rnd() * 0.16, c: i % 3 });
+  for (let i = 0; i < 12; i++) washes.push({ x: rnd(), y: rnd(), r: 0.10 + rnd() * 0.16, c: i % 3 });
+  const moss = [];
+  for (let i = 0; i < 4; i++) moss.push({ x: 0.06 + rnd() * 0.88, y: 0.45 + rnd() * 0.4, r: 0.02 + rnd() * 0.025, blobs: 4 + Math.floor(rnd() * 3) });
   const grass = [];
-  for (let i = 0; i < 24; i++) grass.push({ x: rnd(), y: rnd(), h: 0.015 + rnd() * 0.02, lean: (rnd() - 0.5) * 0.12, blades: 2 + Math.floor(rnd() * 3) });
+  for (let i = 0; i < 30; i++) grass.push({ x: rnd(), y: rnd(), h: 0.012 + rnd() * 0.02, lean: (rnd() - 0.5) * 0.14, blades: 2 + Math.floor(rnd() * 3) });
   const leaves = [];
-  const LEAF_COLS = ['#d97b2e', '#e0a83c', '#8a9a4b', '#b45a2e', '#c98a3a'];
+  const LEAF_COLS = ['#d97b2e', '#e0a83c', '#8a9a4b', '#b45a2e', '#c98a3a', '#d9a03c'];
   for (let i = 0; i < 16; i++) leaves.push({
-    x: rnd(), y: rnd(), s: 0.012 + rnd() * 0.016,
-    rot: rnd() * Math.PI * 2, maple: rnd() < 0.45, col: LEAF_COLS[Math.floor(rnd() * LEAF_COLS.length)]
+    x: rnd(), y: rnd(), s: 0.011 + rnd() * 0.015,
+    rot: rnd() * Math.PI * 2, maple: rnd() < 0.5, col: LEAF_COLS[Math.floor(rnd() * LEAF_COLS.length)]
   });
   const flowers = [];
-  for (let i = 0; i < 4; i++) flowers.push({ x: rnd(), y: rnd(), s: 0.006 + rnd() * 0.005, pink: rnd() < 0.5 });
+  for (let i = 0; i < 5; i++) flowers.push({ x: rnd(), y: rnd(), s: 0.005 + rnd() * 0.005, pink: rnd() < 0.5 });
+  const pebbles = [];
+  for (let i = 0; i < 6; i++) pebbles.push({ x: rnd(), y: rnd(), r: 0.002 + rnd() * 0.003 });
   const cracks = [];
   for (let i = 0; i < 4; i++) cracks.push({ a: rnd() * Math.PI * 2, len: 0.35 + rnd() * 0.45 });
   const speck = [];
-  for (let i = 0; i < 260; i++) speck.push({ x: rnd(), y: rnd(), r: 0.4 + rnd() * 1.1, a: 0.02 + rnd() * 0.05 });
-  return { washes, grass, leaves, flowers, cracks, speck };
+  for (let i = 0; i < 300; i++) speck.push({ x: rnd(), y: rnd(), r: 0.4 + rnd() * 1.1, a: 0.02 + rnd() * 0.05 });
+  const barkStrokes = [];
+  for (let i = 0; i < 46; i++) barkStrokes.push({ x: rnd(), len: 0.4 + rnd() * 0.6, a: 0.28 + rnd() * 0.32, dark: rnd() < 0.5 });
+  return { washes, moss, grass, leaves, flowers, pebbles, cracks, speck, barkStrokes };
 })();
 const WASH_COLS = ['rgba(223,227,200,0.5)', 'rgba(240,223,184,0.55)', 'rgba(232,220,192,0.5)'];
 
@@ -126,15 +132,8 @@ function ringPath(cx, cy, r, i, step, a0, a1) {
   }
 }
 
-function woodColor(i, alpha) {
-  // warm honey, tone varies ring to ring like real growth
-  const t = RINGS[i].tone;
-  const r = Math.round(198 * t), g = Math.round(150 * t), b = Math.round(92 * t);
-  return 'rgba(' + r + ',' + g + ',' + b + ',' + alpha + ')';
-}
-
 function drawMapleLeaf(x, y, s, rot, col) {
-  // five-lobed maple leaf: notched silhouette, stem, centre vein
+  // five-lobed maple leaf: notched silhouette, stem, veins
   const PTS = [
     [0, -1.0], [0.28, -0.62], [0.75, -0.75], [0.55, -0.35], [0.95, -0.15],
     [0.5, 0.05], [0.55, 0.55], [0.2, 0.45], [0.12, 0.9], [0, 0.65],
@@ -154,7 +153,6 @@ function drawMapleLeaf(x, y, s, rot, col) {
   ctx.lineWidth = Math.max(0.6, s * 0.05);
   ctx.beginPath(); ctx.moveTo(0, s * 0.6); ctx.lineTo(0, s * 1.15); ctx.stroke();
   ctx.beginPath(); ctx.moveTo(0, s * 0.5); ctx.lineTo(0, -s * 0.7); ctx.stroke();
-  // side veins to the two upper lobes: what makes it a leaf, not a star
   ctx.beginPath(); ctx.moveTo(0, s * 0.45); ctx.lineTo(-s * 0.6, -s * 0.55); ctx.stroke();
   ctx.beginPath(); ctx.moveTo(0, s * 0.45); ctx.lineTo(s * 0.6, -s * 0.55); ctx.stroke();
   ctx.restore();
@@ -175,8 +173,8 @@ function drawOvalLeaf(x, y, s, rot, col) {
 }
 
 function drawGrass(x, y, h, lean, blades) {
-  ctx.strokeStyle = 'rgba(125,143,87,0.8)';
-  ctx.lineWidth = Math.max(0.8, h * 0.05);
+  ctx.strokeStyle = 'rgba(140,155,100,0.75)';
+  ctx.lineWidth = Math.max(0.7, h * 0.05);
   ctx.lineCap = 'round';
   for (let b = 0; b < blades; b++) {
     const off = (b - (blades - 1) / 2) * h * 0.3;
@@ -201,11 +199,25 @@ function drawFlower(x, y, s, pink) {
   ctx.beginPath(); ctx.arc(x, y, s * 0.45, 0, Math.PI * 2); ctx.fill();
 }
 
+function drawMoss(x, y, r, blobs) {
+  // a soft mossy patch: overlapping sage washes, no hard edges
+  const rnd = srand(Math.floor(x * 1000 + y * 100));
+  for (let b = 0; b < blobs; b++) {
+    const bx = x + (rnd() - 0.5) * r * 1.2, by = y + (rnd() - 0.5) * r * 0.6;
+    const br = r * (0.4 + rnd() * 0.4);
+    const g = ctx.createRadialGradient(bx, by, 0, bx, by, br);
+    g.addColorStop(0, 'rgba(139,154,101,0.38)');
+    g.addColorStop(1, 'rgba(139,154,101,0)');
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(bx, by, br, 0, Math.PI * 2); ctx.fill();
+  }
+}
+
 function drawTwigHand(cx, cy, len, angle, w) {
-  // a little twig: main stem, one fork near the tip, a knot at the base
+  // a delicate twig: main stem, one fork near the tip, a knot at the base
   const tipX = cx + Math.cos(angle) * len, tipY = cy + Math.sin(angle) * len;
   const midX = cx + Math.cos(angle) * len * 0.62, midY = cy + Math.sin(angle) * len * 0.62;
-  ctx.strokeStyle = '#5a4026';
+  ctx.strokeStyle = '#6b4a2f';
   ctx.lineWidth = w;
   ctx.lineCap = 'round';
   ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(tipX, tipY); ctx.stroke();
@@ -237,12 +249,13 @@ function drawFrame(nowMs) {
   const minuteFrac = hrs - hour;                 // 0..1 through the hour
   const sec = new Date().getSeconds() + new Date().getMilliseconds() / 1000;
 
-  const cx = w / 2, cy = h * 0.44;               // stump centre, room below for the time
-  const maxR = Math.min(w, h) * 0.40;
+  const cx = w / 2, cy = h * 0.40;               // log centre, room below for the wall and meadow
+  const maxR = Math.min(w, h) * 0.37;
   const step = maxR / 25.5;                      // 24 rings + pith + bark margin
   const r0 = step * 1.6;                         // pith radius
   const ringR = i => r0 + i * step;
-  const SQUASH = 0.84;                           // the stump is seen at a slight tilt
+  const SQUASH = 0.72;                           // low-angle view, like the reference
+  const wallH = maxR * 0.26;                     // bark side wall height
 
   // paper: soft watercolor washes and grain
   for (const ws of MEADOW.washes) {
@@ -257,24 +270,65 @@ function drawFrame(nowMs) {
     ctx.beginPath(); ctx.arc(sp.x * w, sp.y * h, sp.r, 0, Math.PI * 2); ctx.fill();
   }
 
-  // soft shadow under the stump, grounding it in the grass
+  // moss bushes behind the log
+  for (const mo of MEADOW.moss) drawMoss(mo.x * w, mo.y * h, mo.r * Math.max(w, h), mo.blobs);
+
+  // soft shadow under the log
   ctx.fillStyle = 'rgba(90,70,40,0.16)';
   ctx.beginPath();
-  ctx.ellipse(cx, cy + maxR * SQUASH * 1.02, maxR * 1.02, maxR * 0.16, 0, 0, Math.PI * 2);
+  ctx.ellipse(cx, cy + wallH + maxR * SQUASH * 0.98, maxR * 1.02, maxR * 0.15, 0, 0, Math.PI * 2);
   ctx.fill();
 
-  // the stump itself, drawn in circle coords inside a squash transform
+  // bark side wall: the log's thickness, extruded below the top face
+  const wallGrad = ctx.createLinearGradient(0, cy, 0, cy + wallH);
+  wallGrad.addColorStop(0, '#9a7a52');
+  wallGrad.addColorStop(1, '#6b4a2c');
+  ctx.fillStyle = wallGrad;
+  ctx.beginPath();
+  ctx.moveTo(cx - maxR, cy);
+  ctx.lineTo(cx - maxR, cy + wallH);
+  ctx.ellipse(cx, cy + wallH, maxR, maxR * SQUASH, 0, Math.PI, 0, true);
+  ctx.lineTo(cx + maxR, cy);
+  ctx.closePath();
+  ctx.fill();
+  // bottom edge of the log, darker
+  ctx.strokeStyle = 'rgba(70,48,24,0.85)';
+  ctx.lineWidth = Math.max(1.5, maxR * 0.012);
+  ctx.beginPath();
+  ctx.ellipse(cx, cy + wallH, maxR, maxR * SQUASH, 0, 0, Math.PI, false);
+  ctx.stroke();
+
+  // the top face, drawn in circle coords inside a squash transform
   ctx.save();
   ctx.translate(cx, cy);
   ctx.scale(1, SQUASH);
   ctx.translate(-cx, -cy);
 
   // pale wood disc
-  ctx.fillStyle = '#eee3c8';
+  ctx.fillStyle = '#efe4c8';
   ctx.beginPath(); ctx.arc(cx, cy, ringR(23) + step * 0.85, 0, Math.PI * 2); ctx.fill();
 
+  // sunlight from the top-left, soft shade at the bottom-right
+  const sun = ctx.createLinearGradient(cx - maxR, cy - maxR, cx + maxR, cy + maxR);
+  sun.addColorStop(0, 'rgba(255,250,235,0.35)');
+  sun.addColorStop(0.6, 'rgba(255,250,235,0)');
+  sun.addColorStop(1, 'rgba(150,110,60,0.10)');
+  ctx.fillStyle = sun;
+  ctx.beginPath(); ctx.arc(cx, cy, ringR(23) + step * 0.85, 0, Math.PI * 2); ctx.fill();
+
+  // warm wash over the hours already lived, fading out at its edge
+  if (hour > 0) {
+    const washR = ringR(hour - 1) + step * 0.5;
+    const wash = ctx.createRadialGradient(cx, cy, 0, cx, cy, washR);
+    wash.addColorStop(0, 'rgba(210,160,90,0.20)');
+    wash.addColorStop(0.75, 'rgba(210,160,90,0.10)');
+    wash.addColorStop(1, 'rgba(210,160,90,0)');
+    ctx.fillStyle = wash;
+    ctx.beginPath(); ctx.arc(cx, cy, washR, 0, Math.PI * 2); ctx.fill();
+  }
+
   // faint radial cracks, like dried wood
-  ctx.strokeStyle = 'rgba(' + INK + ',0.14)';
+  ctx.strokeStyle = 'rgba(' + INK + ',0.13)';
   ctx.lineWidth = Math.max(0.7, step * 0.05);
   for (const cr of MEADOW.cracks) {
     ctx.beginPath();
@@ -283,39 +337,28 @@ function drawFrame(nowMs) {
     ctx.stroke();
   }
 
-  // future rings first: faint pencil outlines, wood not yet grown
-  ctx.lineWidth = Math.max(1, step * 0.07);
-  for (let i = hour + 1; i < 24; i++) {
+  // all twenty-four rings, fine lines like the reference.
+  // Lived ones a touch warmer and darker; unreached ones faint pencil.
+  for (let i = 0; i < 24; i++) {
     ringPath(cx, cy, ringR(i), i, step, 0, Math.PI * 2);
-    ctx.strokeStyle = 'rgba(' + INK + ',0.16)';
+    ctx.lineWidth = Math.max(0.8, step * 0.055);
+    if (i < hour) ctx.strokeStyle = 'rgba(150,110,60,' + (0.30 + RINGS[i].tone * 0.18) + ')';
+    else if (i === hour) ctx.strokeStyle = 'rgba(' + INK + ',0.20)';
+    else ctx.strokeStyle = 'rgba(' + INK + ',0.16)';
     ctx.stroke();
   }
 
-  // lived rings: solid warm wood, each ring its own width and tone
-  for (let i = 0; i < hour; i++) {
-    ringPath(cx, cy, ringR(i), i, step, 0, Math.PI * 2);
-    ctx.lineWidth = step * RINGS[i].width;
-    ctx.strokeStyle = woodColor(i, 0.85);
-    ctx.stroke();
-  }
-
-  // the growing ring: faint outline, then the arc of the hour so far
+  // the growing ring: thin bright gold arc of the hour so far
   const gi = hour;
-  ringPath(cx, cy, ringR(gi), gi, step, 0, Math.PI * 2);
-  ctx.lineWidth = Math.max(1, step * 0.07);
-  ctx.strokeStyle = 'rgba(' + INK + ',0.16)';
-  ctx.stroke();
-
   const a0 = -Math.PI / 2;                       // arc starts at the top
   const a1 = a0 + minuteFrac * Math.PI * 2;
-  // soft golden halo under the arc, then the arc itself
   ringPath(cx, cy, ringR(gi), gi, step, a0, a1);
-  ctx.lineWidth = step * RINGS[gi].width * 1.9;
-  ctx.strokeStyle = 'rgba(232,169,60,0.28)';
+  ctx.lineWidth = step * 0.22;
+  ctx.strokeStyle = 'rgba(245,197,66,0.35)';
   ctx.stroke();
   ringPath(cx, cy, ringR(gi), gi, step, a0, a1);
-  ctx.lineWidth = step * RINGS[gi].width;
-  ctx.strokeStyle = woodColor(gi, 0.95);
+  ctx.lineWidth = step * 0.13;
+  ctx.strokeStyle = '#f5c542';
   ctx.stroke();
 
   // cambium tip: bright gold point at the growing edge, breathing with the second
@@ -324,17 +367,17 @@ function drawFrame(nowMs) {
   const pulse = 0.75 + 0.25 * Math.sin(sec * Math.PI * 2 / 2);   // slow 2s breath
   const glowR = step * (1.1 + 0.4 * pulse);
   const glow = ctx.createRadialGradient(tx, ty, 0, tx, ty, glowR);
-  glow.addColorStop(0, 'rgba(255,214,138,0.95)');
-  glow.addColorStop(0.35, 'rgba(255,190,90,0.45)');
-  glow.addColorStop(1, 'rgba(255,190,90,0)');
+  glow.addColorStop(0, 'rgba(255,224,150,0.95)');
+  glow.addColorStop(0.35, 'rgba(255,197,66,0.45)');
+  glow.addColorStop(1, 'rgba(255,197,66,0)');
   ctx.fillStyle = glow;
   ctx.beginPath(); ctx.arc(tx, ty, glowR, 0, Math.PI * 2); ctx.fill();
-  ctx.fillStyle = '#ffe9bd';
+  ctx.fillStyle = '#fff3cf';
   ctx.beginPath(); ctx.arc(tx, ty, Math.max(1.5, step * 0.16), 0, Math.PI * 2); ctx.fill();
 
-  // bark: a rough brown rind around the day
+  // bark rim where the face meets the wall
   ringPath(cx, cy, ringR(23) + step * 0.85, 23, step * 1.6, 0, Math.PI * 2);
-  ctx.lineWidth = step * 0.55;
+  ctx.lineWidth = step * 0.5;
   ctx.strokeStyle = 'rgba(122,90,56,0.95)';
   ctx.stroke();
   ringPath(cx, cy, ringR(23) + step * 1.18, 23, step * 1.6, 0, Math.PI * 2);
@@ -348,13 +391,13 @@ function drawFrame(nowMs) {
   ctx.fillStyle = 'rgba(238,227,200,0.5)';
   ctx.beginPath(); ctx.arc(cx - step * 0.12, cy - step * 0.12, step * 0.09, 0, Math.PI * 2); ctx.fill();
 
-  // twig hands: hour short, minute long, both little twigs
+  // twig hands: hour short, minute long, both delicate twigs
   const hourAngle = ((hrs % 12) / 12) * Math.PI * 2 - Math.PI / 2;
   const minAngle = (minuteFrac) * Math.PI * 2 - Math.PI / 2;
-  drawTwigHand(cx, cy, maxR * 0.34, hourAngle, Math.max(2, step * 0.28));
-  drawTwigHand(cx, cy, maxR * 0.52, minAngle, Math.max(1.5, step * 0.22));
-  ctx.fillStyle = '#5a4026';
-  ctx.beginPath(); ctx.arc(cx, cy, Math.max(2, step * 0.22), 0, Math.PI * 2); ctx.fill();
+  drawTwigHand(cx, cy, maxR * 0.34, hourAngle, Math.max(1.2, step * 0.16));
+  drawTwigHand(cx, cy, maxR * 0.52, minAngle, Math.max(1, step * 0.13));
+  ctx.fillStyle = '#6b4a2f';
+  ctx.beginPath(); ctx.arc(cx, cy, Math.max(1.6, step * 0.18), 0, Math.PI * 2); ctx.fill();
 
   // hour marks, every third hour, along the top ray
   if (showLabels) {
@@ -365,7 +408,7 @@ function drawFrame(nowMs) {
     for (let hh = 0; hh < 24; hh += 3) {
       const rr = ringR(hh) + wobble(hh, -Math.PI / 2, step);
       const lx = cx, ly = cy - rr - step * 0.55;
-      ctx.strokeStyle = 'rgba(243,236,220,0.92)';   // paper halo, legible over honey wood
+      ctx.strokeStyle = 'rgba(243,236,220,0.92)';   // paper halo, legible over the wood
       ctx.lineWidth = 3;
       ctx.strokeText(String(hh).padStart(2, '0'), lx, ly);
       ctx.fillText(String(hh).padStart(2, '0'), lx, ly);
@@ -374,13 +417,79 @@ function drawFrame(nowMs) {
 
   ctx.restore();
 
-  // the meadow around the stump: grass, fallen leaves, tiny flowers.
-  // Band runs from the stump's lower sides down to clear of the bottom text.
-  const bandTop = cy + maxR * SQUASH * 0.55, bandBottom = h - 95;
+  // bark detail on the visible crescent below the face: the face
+  // disc overlaps the wall's upper part, so texture lives only
+  // in the crescent between the face's bottom arc and the log's
+  // bottom edge, clipped to that shape.
+  const faceR = ringR(23) + step * 0.85;
+  ctx.save();
+  ctx.beginPath();
+  ctx.moveTo(cx - faceR, cy);
+  ctx.ellipse(cx, cy, faceR, faceR * SQUASH, 0, Math.PI, 0, true);
+  ctx.lineTo(cx + maxR, cy + wallH);
+  ctx.ellipse(cx, cy + wallH, maxR, maxR * SQUASH, 0, 0, Math.PI, false);
+  ctx.closePath();
+  ctx.clip();
+  // sunlight falling on the wall's left side
+  const wallSun = ctx.createLinearGradient(cx - maxR, cy, cx + maxR * 0.3, cy);
+  wallSun.addColorStop(0, 'rgba(255,240,210,0.20)');
+  wallSun.addColorStop(1, 'rgba(255,240,210,0)');
+  ctx.fillStyle = wallSun;
+  ctx.fillRect(cx - maxR, cy, maxR * 2, wallH + maxR * SQUASH);
+  // vertical bark ridges: dark furrow with a light crest beside it
+  for (const bs of MEADOW.barkStrokes) {
+    const bx = cx + (bs.x * 2 - 1) * maxR * 0.97;
+    const dx = bx - cx;
+    const topY = cy + SQUASH * Math.sqrt(Math.max(0, faceR * faceR - dx * dx));
+    const botY = cy + wallH + SQUASH * Math.sqrt(Math.max(0, maxR * maxR - dx * dx));
+    if (botY - topY < 5) continue;
+    const sway = (bs.x - 0.5) * 8;
+    ctx.lineWidth = Math.max(1, maxR * 0.009);
+    ctx.strokeStyle = 'rgba(60,40,20,' + bs.a + ')';
+    ctx.beginPath();
+    ctx.moveTo(bx, topY + 2);
+    ctx.quadraticCurveTo(bx + sway * 0.4, (topY + botY) / 2, bx + sway, botY - 2);
+    ctx.stroke();
+    ctx.strokeStyle = 'rgba(180,145,95,' + (bs.a * 0.8) + ')';
+    ctx.lineWidth = Math.max(0.7, maxR * 0.005);
+    ctx.beginPath();
+    ctx.moveTo(bx + maxR * 0.012, topY + 2);
+    ctx.quadraticCurveTo(bx + maxR * 0.012 + sway * 0.4, (topY + botY) / 2, bx + maxR * 0.012 + sway, botY - 2);
+    ctx.stroke();
+  }
+  // a few short horizontal cracks in the bark
+  for (const bs of MEADOW.barkStrokes.slice(0, 8)) {
+    if (!bs.dark) continue;
+    const bx = cx + (bs.x * 2 - 1) * maxR * 0.9;
+    const dx = bx - cx;
+    const topY = cy + SQUASH * Math.sqrt(Math.max(0, faceR * faceR - dx * dx));
+    const botY = cy + wallH + SQUASH * Math.sqrt(Math.max(0, maxR * maxR - dx * dx));
+    const by = topY + (botY - topY) * 0.5;
+    ctx.strokeStyle = 'rgba(60,40,20,0.35)';
+    ctx.lineWidth = Math.max(0.7, maxR * 0.005);
+    ctx.beginPath();
+    ctx.moveTo(bx - maxR * 0.02, by);
+    ctx.quadraticCurveTo(bx, by + 2, bx + maxR * 0.02, by - 1);
+    ctx.stroke();
+  }
+  ctx.restore();
+
+  // soft warm vignette, like the reference's paper edge
+  const vg = ctx.createRadialGradient(cx, h * 0.45, Math.min(w, h) * 0.35, cx, h * 0.45, Math.max(w, h) * 0.75);
+  vg.addColorStop(0, 'rgba(120,90,50,0)');
+  vg.addColorStop(1, 'rgba(120,90,50,0.10)');
+  ctx.fillStyle = vg;
+  ctx.fillRect(0, 0, w, h);
+
+  // the meadow around the log: grass, fallen leaves, tiny flowers, pebbles.
+  // Band runs from the log's lower sides down to clear of the bottom text.
+  const bandTop = cy + maxR * SQUASH * 0.6, bandBottom = h - 95;
   const bandY = f => bandTop + f * Math.max(0, bandBottom - bandTop);
-  const onWood = (x, y) => {  // inside the stump disc, ellipse-space
-    const dx = (x - cx) / maxR, dy = (y - cy) / (maxR * SQUASH);
-    return Math.sqrt(dx * dx + dy * dy) < 1.06;
+  const onWood = (x, y) => {  // inside the log's footprint (face or wall)
+    const dx = (x - cx) / maxR, dy = (y - cy - wallH * 0.5) / (maxR * SQUASH + wallH * 0.6);
+    if (Math.sqrt(dx * dx + dy * dy) < 1.04) return true;
+    if (Math.abs(x - cx) < maxR * 1.02 && y > cy && y < cy + wallH + step) return true;
+    return false;
   };
   for (const gr of MEADOW.grass) {
     const gx = gr.x * w, gy = bandY(gr.y);
@@ -397,6 +506,12 @@ function drawFrame(nowMs) {
     const fx = fl.x * w, fy = bandY(fl.y);
     if (onWood(fx, fy)) continue;
     drawFlower(fx, fy, fl.s * Math.max(w, h), fl.pink);
+  }
+  for (const pb of MEADOW.pebbles) {
+    const px = pb.x * w, py = bandY(pb.y);
+    if (onWood(px, py)) continue;
+    ctx.fillStyle = 'rgba(140,125,100,0.35)';
+    ctx.beginPath(); ctx.arc(px, py, pb.r * Math.max(w, h), 0, Math.PI * 2); ctx.fill();
   }
 
   // the time, small and plain, bottom centre

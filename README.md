@@ -18,5 +18,6 @@ Live: https://builtbysai.com/timepieces/
 - **Flicker** (`flicker/`) — six nixie tubes showing real time, HH MM SS.
 - **Orbit** (`orbit/`) — the solar system as a clock: three planets keep the time.
 - **Shadow** (`shadow/`) — a sundial for the digital age; drag to scrub time.
+- **Rings** (`rings/`) — the day as a tree cross-section: one ring per hour, the current hour growing as an arc.
 
 All client-side, no dependencies.

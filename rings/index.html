@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Rings</title>
+<!-- rings-no12 -->
+<style>
+html,body { margin:0; padding:0; height:100%; overflow:hidden; background:#14100b; touch-action:none; }
+#stage { position:fixed; inset:0; display:block; }
+.corner { position:fixed; top:18px; left:20px; color:rgba(216,201,168,0.5);
+  font:10px/1.4 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  letter-spacing:0.28em; pointer-events:none; user-select:none; }
+.clock { position:fixed; left:0; right:0; bottom:max(20px, env(safe-area-inset-bottom));
+  text-align:center; color:rgba(216,201,168,0.85);
+  font:15px/1.4 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  letter-spacing:0.34em; pointer-events:none; user-select:none; }
+.hint { position:fixed; left:0; right:0; bottom:calc(max(20px, env(safe-area-inset-bottom)) + 30px);
+  text-align:center; color:rgba(216,201,168,0.4);
+  font:10px/1.4 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  letter-spacing:0.22em; pointer-events:none; user-select:none;
+  transition:opacity 1.2s ease; }
+</style>
+</head>
+<body>
+<canvas id="stage"></canvas>
+<div class="corner">№ 12 &middot; RINGS</div>
+<div class="hint" id="hint">tap for hour marks</div>
+<div class="clock" id="clock"></div>
+<script>
+'use strict';
+// Rings. The day as a tree cross-section. Twenty-four growth
+// rings, one per hour, radiating from the pith (midnight) out to
+// the bark (next midnight). Hours already lived are solid wood.
+// The current hour's ring grows as an arc, starting at the top
+// and sweeping clockwise through the minute; its leading tip is
+// the living cambium, a bright gold point. Hours not yet reached
+// are faint outlines, wood not yet grown. Count the solid rings
+// from the centre for the hour; the open arc's sweep is the
+// minute. Tap to show hour marks. ?hour=15.5 pins the time.
+
+const canvas = document.getElementById('stage');
+const clockEl = document.getElementById('clock');
+const hintEl = document.getElementById('hint');
+function viewportWH(){
+  const vv = window.visualViewport;
+  if (vv && vv.width > 0 && vv.height > 0) return [vv.width, vv.height];
+  return [window.innerWidth, window.innerHeight];
+}
+const ctx = canvas.getContext('2d');
+
+const BG = '#14100b';
+const PALE = '216,201,168';
+const BARK = '#241708';
+
+let showLabels = false;
+let hintHidden = false;
+
+function srand(seed){ let s = seed % 2147483647; if (s <= 0) s += 2147483646; return () => { s = s * 16807 % 2147483647; return (s - 1) / 2147483646; }; }
+
+// Per-ring wobble: mostly ONE shared slow shape (the trunk's
+// eccentricity, so rings stay parallel like real wood) plus a
+// small per-ring ripple. Amplitudes stay far under the ring
+// spacing so rings never cross.
+const SHAPE = { p0: 1.1, p1: 2.6 };
+const RINGS = [];
+for (let i = 0; i < 24; i++) {
+  const rnd = srand(101 + i * 37);
+  RINGS.push({
+    a3: 0.02 + rnd() * 0.03, p3: rnd() * Math.PI * 2,
+    tone: 0.82 + rnd() * 0.36,         // per-ring wood tone multiplier
+    width: 0.55 + rnd() * 0.12         // per-ring stroke width, in steps
+  });
+}
+function wobble(i, th, step) {
+  const r = RINGS[i];
+  return step * (0.09 * Math.sin(th + SHAPE.p0)
+               + 0.05 * Math.sin(2 * th + SHAPE.p1)
+               + r.a3 * Math.sin(3 * th + r.p3));
+}
+
+function realHours() {
+  const forced = parseFloat(new URLSearchParams(location.search).get('hour'));
+  if (isFinite(forced)) return forced;
+  const d = new Date();
+  return d.getHours() + d.getMinutes() / 60 + d.getSeconds() / 3600 + d.getMilliseconds() / 3600000;
+}
+
+// Trace a ring (full circle or arc) as a path, following its wobble.
+function ringPath(cx, cy, r, i, step, a0, a1) {
+  const n = Math.max(48, Math.floor((a1 - a0) / (Math.PI * 2) * 360));
+  ctx.beginPath();
+  for (let k = 0; k <= n; k++) {
+    const th = a0 + (a1 - a0) * k / n;
+    const rr = r + wobble(i, th, step);
+    const x = cx + Math.cos(th) * rr, y = cy + Math.sin(th) * rr;
+    if (k === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  }
+}
+
+function woodColor(i, alpha) {
+  // warm honey amber, tone varies ring to ring like real growth
+  const t = RINGS[i].tone;
+  const r = Math.round(196 * t), g = Math.round(138 * t), b = Math.round(74 * t);
+  return 'rgba(' + r + ',' + g + ',' + b + ',' + alpha + ')';
+}
+
+function drawFrame(nowMs) {
+  const [w, h] = viewportWH();
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)) {
+    canvas.width = Math.round(w * dpr);
+    canvas.height = Math.round(h * dpr);
+  }
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  canvas.style.width = w + 'px';
+  canvas.style.height = h + 'px';
+
+  ctx.fillStyle = BG;
+  ctx.fillRect(0, 0, w, h);
+  ctx.lineCap = 'round';
+
+  const hrs = ((realHours() % 24) + 24) % 24;
+  const hour = Math.floor(hrs);
+  const minuteFrac = hrs - hour;                 // 0..1 through the hour
+  const sec = new Date().getSeconds() + new Date().getMilliseconds() / 1000;
+
+  const cx = w / 2, cy = h * 0.46;               // cross-section centre, room below for the time
+  const maxR = Math.min(w, h) * 0.42;
+  const step = maxR / 25.5;                      // 24 rings + pith + bark margin
+  const r0 = step * 1.6;                         // pith radius
+  const ringR = i => r0 + i * step;
+
+  // soft vignette so the cross-section sits in the dark
+  const vg = ctx.createRadialGradient(cx, cy, maxR * 0.4, cx, cy, Math.max(w, h) * 0.75);
+  vg.addColorStop(0, 'rgba(0,0,0,0)');
+  vg.addColorStop(1, 'rgba(0,0,0,0.42)');
+
+  // future rings first: faint outlines, wood not yet grown
+  ctx.lineWidth = Math.max(1, step * 0.07);
+  for (let i = hour + 1; i < 24; i++) {
+    ringPath(cx, cy, ringR(i), i, step, 0, Math.PI * 2);
+    ctx.strokeStyle = 'rgba(' + PALE + ',0.10)';
+    ctx.stroke();
+  }
+
+  // lived rings: solid wood, each ring its own width and tone
+  for (let i = 0; i < hour; i++) {
+    ringPath(cx, cy, ringR(i), i, step, 0, Math.PI * 2);
+    ctx.lineWidth = step * RINGS[i].width;
+    ctx.strokeStyle = woodColor(i, 0.92);
+    ctx.stroke();
+  }
+
+  // the growing ring: faint outline, then the arc of the hour so far
+  const gi = hour;
+  ringPath(cx, cy, ringR(gi), gi, step, 0, Math.PI * 2);
+  ctx.lineWidth = Math.max(1, step * 0.07);
+  ctx.strokeStyle = 'rgba(' + PALE + ',0.10)';
+  ctx.stroke();
+
+  const a0 = -Math.PI / 2;                       // arc starts at the top
+  const a1 = a0 + minuteFrac * Math.PI * 2;
+  ringPath(cx, cy, ringR(gi), gi, step, a0, a1);
+  ctx.lineWidth = step * RINGS[gi].width;
+  ctx.strokeStyle = woodColor(gi, 0.95);
+  ctx.stroke();
+
+  // cambium tip: bright gold point at the growing edge, breathing with the second
+  const tipR = ringR(gi) + wobble(gi, a1, step);
+  const tx = cx + Math.cos(a1) * tipR, ty = cy + Math.sin(a1) * tipR;
+  const pulse = 0.75 + 0.25 * Math.sin(sec * Math.PI * 2 / 2);   // slow 2s breath
+  const glowR = step * (0.9 + 0.35 * pulse);
+  const glow = ctx.createRadialGradient(tx, ty, 0, tx, ty, glowR);
+  glow.addColorStop(0, 'rgba(255,214,138,0.95)');
+  glow.addColorStop(0.35, 'rgba(255,190,90,0.45)');
+  glow.addColorStop(1, 'rgba(255,190,90,0)');
+  ctx.fillStyle = glow;
+  ctx.beginPath(); ctx.arc(tx, ty, glowR, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = '#ffe9bd';
+  ctx.beginPath(); ctx.arc(tx, ty, Math.max(1.5, step * 0.16), 0, Math.PI * 2); ctx.fill();
+
+  // bark: a rough dark rind around the day
+  ringPath(cx, cy, ringR(23) + step * 0.85, 23, step * 1.6, 0, Math.PI * 2);
+  ctx.lineWidth = step * 0.55;
+  ctx.strokeStyle = 'rgba(42,26,14,0.95)';
+  ctx.stroke();
+  ringPath(cx, cy, ringR(23) + step * 1.18, 23, step * 1.6, 0, Math.PI * 2);
+  ctx.lineWidth = Math.max(1, step * 0.10);
+  ctx.strokeStyle = 'rgba(20,12,6,0.9)';
+  ctx.stroke();
+
+  // pith: the dark knot at the centre, midnight
+  ctx.fillStyle = '#1d1206';
+  ctx.beginPath(); ctx.arc(cx, cy, step * 0.55, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = 'rgba(216,201,168,0.35)';
+  ctx.beginPath(); ctx.arc(cx - step * 0.12, cy - step * 0.12, step * 0.10, 0, Math.PI * 2); ctx.fill();
+
+  ctx.fillStyle = vg;
+  ctx.fillRect(0, 0, w, h);
+
+  // hour marks, every third hour, along the top ray
+  if (showLabels) {
+    ctx.fillStyle = 'rgba(' + PALE + ',0.75)';
+    ctx.font = Math.max(9, Math.round(step * 0.62)) + 'px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    for (let hh = 0; hh < 24; hh += 3) {
+      const rr = ringR(hh) + wobble(hh, -Math.PI / 2, step);
+      ctx.fillText(String(hh).padStart(2, '0'), cx, cy - rr - step * 0.55);
+    }
+  }
+
+  // the time, small and plain, bottom centre
+  const hh = Math.floor(hrs), mm = Math.floor((hrs - hh) * 60);
+  clockEl.textContent = String(hh).padStart(2, '0') + ':' + String(mm).padStart(2, '0');
+
+  if (!hintHidden && nowMs > 6000) { hintEl.style.opacity = '0'; hintHidden = true; }
+}
+
+function loop(nowMs) {
+  drawFrame(nowMs);
+  if (typeof requestAnimationFrame === 'function') requestAnimationFrame(loop);
+}
+drawFrame(typeof performance !== 'undefined' ? performance.now() : 0);
+if (typeof requestAnimationFrame === 'function') requestAnimationFrame(loop);
+
+canvas.addEventListener('pointerdown', () => {
+  showLabels = !showLabels;
+  if (hintEl) hintEl.style.opacity = '0';
+  hintHidden = true;
+});
+window.addEventListener('resize', () => drawFrame(performance.now()));
+if (window.visualViewport) window.visualViewport.addEventListener('resize', () => drawFrame(performance.now()));
+</script>
+</body>
+</html>

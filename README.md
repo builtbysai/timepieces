@@ -20,5 +20,6 @@ Live: https://builtbysai.com/timepieces/
 - **Shadow** (`shadow/`) — a sundial for the digital age; drag to scrub time.
 - **Rings** (`rings/`) — the day as a tree cross-section: one ring per hour, the current hour growing as an arc.
 - **Progress** (`progress/`) — the day as wavy contour lines, after Hans's "Progress is not Linear" poster: one line per hour, drawn as you live it, the pen is now.
+- **QLOCKTWO** (`qlocktwo/`) — the time in words on a letter grid, after the real QLOCKTWO: only the letters spelling the time light up, in 5-minute steps, with four corner dots for the extra minutes.
 
 All client-side, no dependencies.

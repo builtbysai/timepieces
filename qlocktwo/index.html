@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>QLOCKTWO</title>
+<!-- qlocktwo-no14-words -->
+<style>
+html,body { margin:0; padding:0; height:100%; overflow:hidden; background:#171312; touch-action:none; }
+body { display:flex; align-items:center; justify-content:center; }
+#wall { position:fixed; inset:0; pointer-events:none;
+  background:radial-gradient(120% 90% at 50% 38%, rgba(64,52,44,0.55), rgba(23,19,18,0) 70%); }
+#plate { position:relative; width:min(92vmin, 640px); height:min(92vmin, 640px);
+  background:#211d1a;
+  background-image:radial-gradient(90% 90% at 50% 42%, #26211d 0%, #211d1a 55%, #1c1815 100%);
+  border-radius:4px;
+  box-shadow:0 30px 80px rgba(0,0,0,0.65), 0 4px 18px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,240,220,0.05); }
+#grid { position:absolute; inset:7%; display:grid;
+  grid-template-columns:repeat(11, 1fr); grid-template-rows:repeat(10, 1fr); }
+#grid span { display:flex; align-items:center; justify-content:center;
+  font-family:"Helvetica Neue", Arial, "Segoe UI", Roboto, sans-serif;
+  font-weight:500; color:rgba(255,246,232,0.13);
+  user-select:none; transition:color .8s ease, text-shadow .8s ease; }
+#grid span.lit { color:#fff6e8;
+  text-shadow:0 0 14px rgba(255,214,150,0.55), 0 0 42px rgba(255,196,110,0.22); }
+.dot { position:absolute; width:2.2%; height:2.2%; border-radius:50%;
+  background:rgba(255,246,232,0.14); transition:background .8s ease, box-shadow .8s ease; }
+.dot.lit { background:#fff6e8;
+  box-shadow:0 0 12px rgba(255,214,150,0.7), 0 0 28px rgba(255,196,110,0.3); }
+#dot-tl { top:3.1%; left:3.1%; } #dot-tr { top:3.1%; right:3.1%; }
+#dot-br { bottom:3.1%; right:3.1%; } #dot-bl { bottom:3.1%; left:3.1%; }
+.corner { position:fixed; top:18px; left:20px; color:rgba(216,203,184,0.6);
+  font:11px/1.4 Georgia,'Times New Roman',serif;
+  letter-spacing:0.28em; pointer-events:none; user-select:none; }
+.clock { position:fixed; left:0; right:0; bottom:max(20px, env(safe-area-inset-bottom));
+  text-align:center; color:rgba(216,203,184,0.9);
+  font:16px/1.4 Georgia,'Times New Roman',serif;
+  letter-spacing:0.34em; pointer-events:none; user-select:none;
+  opacity:0; transition:opacity .6s ease; }
+.clock.show { opacity:1; }
+.hint { position:fixed; left:0; right:0; bottom:calc(max(20px, env(safe-area-inset-bottom)) + 32px);
+  text-align:center; color:rgba(216,203,184,0.4);
+  font:11px/1.4 Georgia,'Times New Roman',serif;
+  letter-spacing:0.22em; pointer-events:none; user-select:none;
+  transition:opacity 1.2s ease; }
+</style>
+</head>
+<body>
+<div id="wall"></div>
+<div id="plate">
+  <div id="grid"></div>
+  <div class="dot" id="dot-tl"></div>
+  <div class="dot" id="dot-tr"></div>
+  <div class="dot" id="dot-br"></div>
+  <div class="dot" id="dot-bl"></div>
+</div>
+<div class="corner">№ 14 &middot; QLOCKTWO</div>
+<div class="hint" id="hint">tap for exact time</div>
+<div class="clock" id="clock"></div>
+<script>
+'use strict';
+// QLOCKTWO, after the real word clock (Biegert & Funk, 2009): a
+// square plate carries a matrix of letters; only the letters
+// spelling the time in words light up, warm white through the
+// matte cover. Unlit letters stay faintly visible, so the face is
+// a typographic artwork even when the time is not being read. The
+// time is told in 5-minute steps — IT IS TWELVE O'CLOCK, QUARTER
+// PAST SEVEN, HALF PAST THREE — and the four small dots, one in
+// each corner of the face, add the minutes between steps: each
+// lit dot is one minute. IT IS lights only on the hour and the
+// half hour, the clock's factory setting. Read the lit words,
+// count the lit dots. Tap for the exact time.
+// ?hour=7.3 and ?time=07:18 both pin the time.
+
+const GRID = [
+  'ITLISASAMPM',
+  'ACQUARTERDC',
+  'TWENTYFIVEX',
+  'HALFSTENFTO',
+  'PASTERUNINE',
+  'ONESIXTHREE',
+  'FOURFIVETWO',
+  'EIGHTELEVEN',
+  'SEVENTWELVE',
+  'TENSEOCLOCK'
+];
+// Word cells: [row, start col, length]. TEN and FIVE each occur
+// twice — row 3 TEN is the minutes, row 9 TEN is the hour; row 2
+// FIVE belongs to TWENTY-FIVE, row 6 FIVE is the minutes.
+const WORDS = {
+  IT: [0, 0, 2], IS: [0, 3, 2],
+  QUARTER: [1, 2, 7],
+  TWENTY: [2, 0, 6], FIVE25: [2, 6, 4],
+  HALF: [3, 0, 4], TENMIN: [3, 5, 3], TO: [3, 9, 2],
+  PAST: [4, 0, 4], NINE: [4, 7, 4],
+  ONE: [5, 0, 3], SIX: [5, 3, 3], THREE: [5, 6, 5],
+  FOUR: [6, 0, 4], FIVEMIN: [6, 4, 4], TWO: [6, 8, 3],
+  EIGHT: [7, 0, 5], ELEVEN: [7, 5, 6],
+  SEVEN: [8, 0, 5], TWELVE: [8, 5, 6],
+  TENHOUR: [9, 0, 3], OCLOCK: [9, 5, 6]
+};
+const HOUR_WORDS = { 1: 'ONE', 2: 'TWO', 3: 'THREE', 4: 'FOUR', 5: 'FIVEMIN',
+  6: 'SIX', 7: 'SEVEN', 8: 'EIGHT', 9: 'NINE', 10: 'TENHOUR', 11: 'ELEVEN', 12: 'TWELVE' };
+
+const gridEl = document.getElementById('grid');
+const clockEl = document.getElementById('clock');
+const hintEl = document.getElementById('hint');
+const dots = [document.getElementById('dot-tl'), document.getElementById('dot-tr'),
+              document.getElementById('dot-br'), document.getElementById('dot-bl')];
+
+// Build the 110 letter cells once.
+const cells = [];
+for (let r = 0; r < 10; r++) {
+  for (let c = 0; c < 11; c++) {
+    const s = document.createElement('span');
+    s.textContent = GRID[r][c];
+    s.dataset.r = r; s.dataset.c = c;
+    gridEl.appendChild(s);
+    cells.push(s);
+  }
+}
+
+function fit() {
+  const plate = document.getElementById('plate');
+  const size = plate.clientWidth;
+  gridEl.style.fontSize = Math.round(size * 0.058) + 'px';
+}
+window.addEventListener('resize', fit);
+if (window.visualViewport) window.visualViewport.addEventListener('resize', fit);
+fit();
+
+function pinnedTime() {
+  const q = new URLSearchParams(location.search);
+  const t = q.get('time');
+  if (t) {
+    const m = /^(\d{1,2}):(\d{2})$/.exec(t.trim());
+    if (m) return { h: (+m[1]) % 24, m: +m[2] };
+  }
+  const hf = parseFloat(q.get('hour'));
+  if (isFinite(hf)) {
+    let h = Math.floor(hf);
+    // Round, not floor: 7.3 - 7 is 0.2999999 in binary, floor would give 17 minutes.
+    let m = Math.round((hf - h) * 60);
+    if (m === 60) { m = 0; h += 1; }
+    return { h: ((h % 24) + 24) % 24, m };
+  }
+  return null;
+}
+const pinned = pinnedTime();
+
+function nowTime() {
+  if (pinned) return pinned;
+  const d = new Date();
+  return { h: d.getHours(), m: d.getMinutes() };
+}
+
+// The phrase for a time: step = 5-minute block, extra = minutes
+// between steps (the corner dots). IT IS only on steps 0 and 6.
+function phrase(h, m) {
+  const step = Math.floor(m / 5);
+  const extra = m % 5;
+  const h12 = (h % 12) || 12;
+  const next = (h12 % 12) + 1;
+  const lit = [];
+  switch (step) {
+    case 0:  lit.push('IT', 'IS', HOUR_WORDS[h12], 'OCLOCK'); break;
+    case 1:  lit.push('FIVEMIN', 'PAST', HOUR_WORDS[h12]); break;
+    case 2:  lit.push('TENMIN', 'PAST', HOUR_WORDS[h12]); break;
+    case 3:  lit.push('QUARTER', 'PAST', HOUR_WORDS[h12]); break;
+    case 4:  lit.push('TWENTY', 'PAST', HOUR_WORDS[h12]); break;
+    case 5:  lit.push('TWENTY', 'FIVE25', 'PAST', HOUR_WORDS[h12]); break;
+    case 6:  lit.push('IT', 'IS', 'HALF', 'PAST', HOUR_WORDS[h12]); break;
+    case 7:  lit.push('TWENTY', 'FIVE25', 'TO', HOUR_WORDS[next]); break;
+    case 8:  lit.push('TWENTY', 'TO', HOUR_WORDS[next]); break;
+    case 9:  lit.push('QUARTER', 'TO', HOUR_WORDS[next]); break;
+    case 10: lit.push('TENMIN', 'TO', HOUR_WORDS[next]); break;
+    case 11: lit.push('FIVEMIN', 'TO', HOUR_WORDS[next]); break;
+  }
+  return { lit, extra };
+}
+
+function render() {
+  const { h, m } = nowTime();
+  const { lit, extra } = phrase(h, m);
+  const on = new Set();
+  for (const w of lit) {
+    const [r, c, len] = WORDS[w];
+    for (let k = 0; k < len; k++) on.add(r + ',' + (c + k));
+  }
+  for (const s of cells) s.classList.toggle('lit', on.has(s.dataset.r + ',' + s.dataset.c));
+  dots.forEach((d, i) => d.classList.toggle('lit', i < extra));
+  clockEl.textContent = String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0');
+}
+
+let hintHidden = false;
+function hideHint() {
+  if (!hintHidden) { hintHidden = true; hintEl.style.opacity = '0'; }
+}
+setTimeout(hideHint, 6000);
+
+document.addEventListener('pointerdown', () => {
+  clockEl.classList.toggle('show');
+  hideHint();
+});
+
+render();
+setInterval(render, 1000);
+</script>
+</body>
+</html>

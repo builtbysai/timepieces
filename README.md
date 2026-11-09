@@ -19,5 +19,6 @@ Live: https://builtbysai.com/timepieces/
 - **Orbit** (`orbit/`) — the solar system as a clock: three planets keep the time.
 - **Shadow** (`shadow/`) — a sundial for the digital age; drag to scrub time.
 - **Rings** (`rings/`) — the day as a tree cross-section: one ring per hour, the current hour growing as an arc.
+- **Progress** (`progress/`) — the day as wavy contour lines, after Hans's "Progress is not Linear" poster: one line per hour, drawn as you live it, the pen is now.
 
 All client-side, no dependencies.

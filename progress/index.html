@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Progress</title>
+<!-- progress-no13-waves -->
+<style>
+html,body { margin:0; padding:0; height:100%; overflow:hidden; background:#f3ecdc; touch-action:none; }
+#stage { position:fixed; inset:0; display:block; }
+.corner { position:fixed; top:18px; left:20px; color:rgba(107,84,58,0.65);
+  font:11px/1.4 Georgia,'Times New Roman',serif;
+  letter-spacing:0.28em; pointer-events:none; user-select:none; }
+.clock { position:fixed; left:0; right:0; bottom:max(20px, env(safe-area-inset-bottom));
+  text-align:center; color:rgba(107,84,58,0.9);
+  font:16px/1.4 Georgia,'Times New Roman',serif;
+  letter-spacing:0.34em; pointer-events:none; user-select:none; }
+.hint { position:fixed; left:0; right:0; bottom:calc(max(20px, env(safe-area-inset-bottom)) + 32px);
+  text-align:center; color:rgba(107,84,58,0.45);
+  font:11px/1.4 Georgia,'Times New Roman',serif;
+  letter-spacing:0.22em; pointer-events:none; user-select:none;
+  transition:opacity 1.2s ease; }
+</style>
+</head>
+<body>
+<canvas id="stage"></canvas>
+<div class="corner">№ 13 &middot; PROGRESS</div>
+<div class="hint" id="hint">tap for hour marks</div>
+<div class="clock" id="clock"></div>
+<script>
+'use strict';
+// Progress, after Hans's poster: "Progress is not Linear" — wavy
+// contour lines in earth colours on cream paper. The day is
+// twenty-four lines, one per hour, top (00) to bottom (23). Each
+// line is a wave: it wanders up and down as it crosses the page,
+// because progress is not linear — but it always moves left to
+// right, because time does. Hours already lived are drawn in full
+// colour; the current hour's line is being drawn right now, the
+// pen's position along it is the minute; hours not yet reached
+// are faint pencil lines, not yet walked. Count the finished lines
+// for the hour; the pen is the minute. Tap to show hour marks.
+// ?hour=10.75 pins the time.
+
+const canvas = document.getElementById('stage');
+const clockEl = document.getElementById('clock');
+const hintEl = document.getElementById('hint');
+function viewportWH(){
+  const vv = window.visualViewport;
+  if (vv && vv.width > 0 && vv.height > 0) return [vv.width, vv.height];
+  return [window.innerWidth, window.innerHeight];
+}
+const ctx = canvas.getContext('2d');
+
+const BG = '#f3ecdc';
+const INK = '107,84,58';           // warm brown ink for marks and text
+const PALETTE = ['#b45a32', '#cf9a3e', '#8ba07a', '#c98d7a', '#b98d54', '#7c8a68'];
+
+let showLabels = false;
+let hintHidden = false;
+
+function srand(seed){ let s = seed % 2147483647; if (s <= 0) s += 2147483646; return () => { s = s * 16807 % 2147483647; return (s - 1) / 2147483646; }; }
+
+function realHours(){
+  const forced = parseFloat(new URLSearchParams(location.search).get('hour'));
+  if (isFinite(forced)) return forced;
+  const d = new Date();
+  return d.getHours() + d.getMinutes() / 60 + d.getSeconds() / 3600 + d.getMilliseconds() / 3600000;
+}
+
+// One shared terrain, so the lines stay a family like the poster's:
+// a hill left of centre, a deep dip at the centre, a smaller hill
+// right of centre, plus a slow sine. The terrain is SHARED, so it
+// can swing wide (two line-spacings and more) without lines ever
+// crossing — only the small per-line differences can close the
+// gap, and those stay far under the line spacing. Each line gets
+// its own small amplitude and phase variation.
+const LINES = [];
+for (let i = 0; i < 24; i++){
+  const rnd = srand(700 + i * 31);
+  LINES.push({
+    amp: 0.90 + rnd() * 0.18,
+    p1: rnd() * Math.PI * 2,
+    p2: rnd() * Math.PI * 2,
+    col: PALETTE[i % PALETTE.length]
+  });
+}
+function gauss(x, c, w){ const d = (x - c) / w; return Math.exp(-0.5 * d * d); }
+function profile(i, x){
+  const L = LINES[i];
+  return L.amp * (0.90 * gauss(x, 0.30, 0.11)
+    - 1.30 * gauss(x, 0.52, 0.085)
+    + 0.65 * gauss(x, 0.72, 0.10)
+    + 0.06 * Math.sin(Math.PI * 4 * x + L.p1)
+    + 0.03 * Math.sin(Math.PI * 10 * x + L.p2));
+}
+
+// The words, handwritten along the waves like the poster: each one
+// sits in the gap between two lines, so no line cuts through a word.
+const WORDS = [
+  { t: 'Progress', x: 0.16, line: 3,  rot: -0.10, size: 1.15 },
+  { t: 'is',       x: 0.40, line: 7,  rot: 0.06,  size: 0.85 },
+  { t: 'not',      x: 0.56, line: 4,  rot: -0.05, size: 0.95 },
+  { t: 'Linear',   x: 0.74, line: 6,  rot: 0.08,  size: 1.10 }
+];
+const HAND = '"Segoe Script","Bradley Hand","Comic Sans MS",cursive';
+
+let W = 0, H = 0, dpr = 1;
+let field = null; // {x0,x1,top,spacing,pts: per-line Float32Array of y}
+const NPTS = 220;
+
+function layout(){
+  const [vw, vh] = viewportWH();
+  dpr = Math.min(window.devicePixelRatio || 1, 2);
+  W = vw; H = vh;
+  canvas.width = Math.round(vw * dpr);
+  canvas.height = Math.round(vh * dpr);
+  canvas.style.width = vw + 'px';
+  canvas.style.height = vh + 'px';
+  const mX = Math.max(28, vw * 0.07);
+  const top = Math.max(64, vh * 0.12);
+  const bottom = Math.max(92, vh * 0.84);
+  const spacing = (bottom - top) / 23;
+  const ampPx = spacing * 1.9;
+  const pts = [];
+  for (let i = 0; i < 24; i++){
+    const arr = new Float32Array(NPTS + 1);
+    for (let k = 0; k <= NPTS; k++){
+      const x = k / NPTS;
+      arr[k] = top + i * spacing + profile(i, x) * ampPx;
+    }
+    pts.push(arr);
+  }
+  field = { x0: mX, x1: vw - mX, top, spacing, ampPx, pts };
+}
+
+function linePath(i, upto){
+  const f = field;
+  const n = Math.max(2, Math.floor(NPTS * upto));
+  ctx.beginPath();
+  for (let k = 0; k <= n; k++){
+    const x = f.x0 + (f.x1 - f.x0) * k / NPTS;
+    const y = f.pts[i][k];
+    if (k === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  }
+}
+
+function drawFrame(){
+  const hrs = realHours();
+  const h = Math.floor(hrs) % 24;
+  const frac = hrs - Math.floor(hrs);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.fillStyle = BG;
+  ctx.fillRect(0, 0, W, H);
+
+  // Faint pencil guides: the whole day, not yet walked.
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  for (let i = 0; i < 24; i++){
+    ctx.strokeStyle = 'rgba(' + INK + ',0.16)';
+    ctx.lineWidth = 1;
+    linePath(i, 1);
+    ctx.stroke();
+  }
+  // Finished hours in full colour; the current hour up to now.
+  for (let i = 0; i < 24; i++){
+    const p = i < h ? 1 : (i === h ? frac : 0);
+    if (p <= 0) continue;
+    ctx.strokeStyle = LINES[i].col;
+    ctx.globalAlpha = i < h ? 0.92 : 0.95;
+    ctx.lineWidth = i === h ? 2.4 : 2;
+    linePath(i, p);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+  }
+  // The pen: where now is, on the current hour's line.
+  if (frac > 0 || h > 0){
+    const f = field;
+    const k = Math.min(NPTS, Math.floor(NPTS * frac));
+    const px = f.x0 + (f.x1 - f.x0) * k / NPTS;
+    const py = f.pts[h][k];
+    ctx.fillStyle = 'rgba(' + INK + ',0.18)';
+    ctx.beginPath(); ctx.arc(px, py, 11, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = 'rgba(' + INK + ',0.9)';
+    ctx.beginPath(); ctx.arc(px, py, 4.2, 0, Math.PI * 2); ctx.fill();
+  }
+  // Hour marks, on tap.
+  if (showLabels){
+    ctx.fillStyle = 'rgba(' + INK + ',0.55)';
+    ctx.font = '10px Georgia,serif';
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    for (let i = 0; i < 24; i++){
+      ctx.fillText(String(i).padStart(2, '0'), field.x0 - 8, field.top + i * field.spacing);
+    }
+  }
+  // The handwritten words along the waves: each one sits in the gap
+  // between two lines, so no line cuts through a word.
+  const base = Math.max(19, Math.min(34, W * 0.026));
+  ctx.fillStyle = 'rgba(' + INK + ',0.78)';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'alphabetic';
+  for (const w of WORDS){
+    const f = field;
+    const k = Math.min(NPTS, Math.round(NPTS * w.x));
+    const wx = f.x0 + (f.x1 - f.x0) * w.x;
+    const wy = (f.pts[w.line][k] + f.pts[w.line + 1][k]) / 2 + base * 0.28;
+    ctx.save();
+    ctx.translate(wx, wy);
+    ctx.rotate(w.rot);
+    ctx.font = 'italic 600 ' + Math.round(base * w.size) + 'px ' + HAND;
+    ctx.fillText(w.t, 0, 0);
+    ctx.restore();
+  }
+  // The clock, small and plain at the bottom: same time the pen shows.
+  const hh = String(Math.floor(hrs) % 24).padStart(2, '0');
+  const mm = String(Math.floor((hrs % 1) * 60)).padStart(2, '0');
+  clockEl.textContent = hh + ':' + mm;
+}
+
+canvas.addEventListener('pointerdown', () => {
+  showLabels = !showLabels;
+  if (!hintHidden){ hintHidden = true; hintEl.style.opacity = '0'; }
+  drawFrame();
+});
+window.addEventListener('resize', () => { layout(); drawFrame(); });
+if (window.visualViewport) window.visualViewport.addEventListener('resize', () => { layout(); drawFrame(); });
+
+layout();
+(function loop(){ drawFrame(); requestAnimationFrame(loop); })();
+</script>
+</body>
+</html>

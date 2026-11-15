@@ -21,5 +21,6 @@ Live: https://builtbysai.com/timepieces/
 - **Rings** (`rings/`) — the day as a tree cross-section: one ring per hour, the current hour growing as an arc.
 - **Progress** (`progress/`) — the day as wavy contour lines, after Hans's "Progress is not Linear" poster: one line per hour, drawn as you live it, the pen is now.
 - **QLOCKTWO** (`qlocktwo/`) — the time in words on a letter grid, after the real QLOCKTWO: only the letters spelling the time light up, in 5-minute steps, with four corner dots for the extra minutes.
+- **Candle** (`candle/`) — the day as a taper candle, after the historical candle clocks: the remaining height is the time left in the day, hour marks etched on the wax, the flame flickers with the seconds, and the wax pool grows as the day passes; a fresh candle at midnight.
 
 All client-side, no dependencies.

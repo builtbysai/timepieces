@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Candle — Timepieces № 15</title>
+<!-- candle-no15-burn -->
+<style>
+html,body { margin:0; padding:0; height:100%; overflow:hidden; background:#121110; touch-action:none; }
+body { display:flex; align-items:center; justify-content:center; }
+canvas { position:fixed; inset:0; display:block; }
+.corner { position:fixed; top:18px; left:20px; color:rgba(216,203,184,0.62);
+  font:11px/1.4 Georgia,'Times New Roman',serif;
+  letter-spacing:0.28em; pointer-events:none; user-select:none;
+  opacity:1; transition:opacity .6s ease; }
+.clock { position:fixed; left:0; right:0; bottom:max(20px, env(safe-area-inset-bottom));
+  text-align:center; color:rgba(216,203,184,0.92);
+  font:16px/1.4 Georgia,'Times New Roman',serif;
+  letter-spacing:0.34em; pointer-events:none; user-select:none;
+  opacity:0; transition:opacity .6s ease; }
+.clock.show { opacity:1; }
+.clock small { display:block; margin-top:6px; font-size:11px;
+  letter-spacing:0.3em; color:rgba(216,203,184,0.55); }
+.hint { position:fixed; left:0; right:0; bottom:calc(max(20px, env(safe-area-inset-bottom)) + 34px);
+  text-align:center; color:rgba(216,203,184,0.4);
+  font:11px/1.4 Georgia,'Times New Roman',serif;
+  letter-spacing:0.22em; pointer-events:none; user-select:none;
+  transition:opacity 1.2s ease; }
+body.clean .corner, body.clean .clock, body.clean .hint { opacity:0 !important; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div class="corner">№ 15 &middot; CANDLE</div>
+<div class="hint" id="hint">tap for exact time</div>
+<div class="clock" id="clock"></div>
+<script>
+'use strict';
+// CANDLE — the day as a taper candle, after the historical candle
+// clocks (Alfred the Great's, c. 871): a candle marked with the
+// hours, burning down as the day passes. Here the remaining height
+// IS the time left in the day — full at 00:00, a stub at 23:59,
+// and a fresh candle at midnight. Twenty-four hour marks are
+// etched on the wax; the flame sits on the line of the hour now
+// burning, and the numerals 6 / 12 / 18 / 24 count the hours
+// still left. The flame flickers with the seconds — a small flare
+// on every new second — the wick glows, and the wax pool at the
+// base grows as the day passes, with drips running down the side
+// once the day is well under way. Read the height: the candle
+// that is left is the day that is left. Tap cycles the labels.
+// ?hour=9.75 and ?time=09:45 both pin the time.
+
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+const clockEl = document.getElementById('clock');
+const hintEl = document.getElementById('hint');
+
+let W = 0, H = 0, DPR = 1;
+function resize() {
+  DPR = Math.min(window.devicePixelRatio || 1, 2);
+  W = window.innerWidth; H = window.innerHeight;
+  canvas.width = Math.round(W * DPR);
+  canvas.height = Math.round(H * DPR);
+  canvas.style.width = W + 'px';
+  canvas.style.height = H + 'px';
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+}
+window.addEventListener('resize', resize);
+if (window.visualViewport) window.visualViewport.addEventListener('resize', resize);
+resize();
+
+function pinnedTime() {
+  const q = new URLSearchParams(location.search);
+  const t = q.get('time');
+  if (t) {
+    const m = /^(\d{1,2}):(\d{2})$/.exec(t.trim());
+    if (m) return { h: (+m[1]) % 24, m: +m[2], s: 0 };
+  }
+  const hf = parseFloat(q.get('hour'));
+  if (isFinite(hf)) {
+    let h = Math.floor(hf);
+    // Round, not floor: 7.3 - 7 is 0.2999999 in binary, floor would give 17 minutes.
+    let m = Math.round((hf - h) * 60);
+    if (m === 60) { m = 0; h += 1; }
+    return { h: ((h % 24) + 24) % 24, m, s: 0 };
+  }
+  return null;
+}
+const pinned = pinnedTime();
+
+function nowParts() {
+  if (pinned) return pinned;
+  const d = new Date();
+  return { h: d.getHours(), m: d.getMinutes(), s: d.getSeconds(), ms: d.getMilliseconds() };
+}
+
+// Smooth pseudo-noise from sines — no library, deterministic.
+function noise(t) {
+  return Math.sin(t * 1.7) * 0.55 + Math.sin(t * 3.1 + 1.3) * 0.3 + Math.sin(t * 5.7 + 4.1) * 0.15;
+}
+
+function draw(now) {
+  const { h, m, s } = nowParts();
+  const secs = h * 3600 + m * 60 + s;
+  const elapsed = secs / 86400;        // 0 at 00:00, 1 at 24:00
+  const remain = 1 - elapsed;          // 1 at 00:00, 0 at 24:00
+  const remainH = remain * 24;
+
+  // --- layout -------------------------------------------------
+  const v = Math.min(W, H);
+  const maxH = v * 0.62;               // full candle height
+  const cw = Math.max(34, v * 0.085);  // candle width
+  const cx = W / 2;
+  const baseY = H * 0.80;
+  const minStub = v * 0.045;           // a stub always remains at 23:59
+  const ch = minStub + remain * (maxH - minStub);
+  const topY = baseY - ch;
+  const tSec = now / 1000;
+  const frac = pinned ? 0 : (nowParts().ms || 0) / 1000;
+
+  // --- ground -------------------------------------------------
+  ctx.clearRect(0, 0, W, H);
+  const g = ctx.createRadialGradient(cx, baseY - ch * 0.45, v * 0.05, cx, H * 0.55, v * 0.95);
+  g.addColorStop(0, '#1b1815');
+  g.addColorStop(0.55, '#141210');
+  g.addColorStop(1, '#0e0d0c');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, W, H);
+
+  // warm light cast on the wall behind the flame
+  const glowR = v * 0.42;
+  const wg = ctx.createRadialGradient(cx, topY - cw * 0.9, 0, cx, topY - cw * 0.9, glowR);
+  wg.addColorStop(0, 'rgba(255,176,90,0.10)');
+  wg.addColorStop(0.5, 'rgba(255,160,70,0.035)');
+  wg.addColorStop(1, 'rgba(255,160,70,0)');
+  ctx.fillStyle = wg;
+  ctx.fillRect(cx - glowR, topY - cw * 0.9 - glowR, glowR * 2, glowR * 2);
+
+  // --- wax pool at the base (grows with the elapsed day) -----
+  const poolRx = cw * (0.95 + 1.5 * elapsed);
+  const poolRy = poolRx * 0.26;
+  const pg = ctx.createRadialGradient(cx, baseY, poolRx * 0.1, cx, baseY, poolRx);
+  pg.addColorStop(0, '#f6ead0');
+  pg.addColorStop(0.7, '#e9d9b6');
+  pg.addColorStop(1, 'rgba(214,196,158,0.55)');
+  ctx.fillStyle = pg;
+  ctx.beginPath();
+  ctx.ellipse(cx, baseY + 2, poolRx, poolRy, 0, 0, Math.PI * 2);
+  ctx.fill();
+  // pool highlight — the flame reflected in the wax
+  ctx.fillStyle = 'rgba(255,214,140,0.35)';
+  ctx.beginPath();
+  ctx.ellipse(cx, baseY + 1, poolRx * 0.42, poolRy * 0.42, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // soft shadow of the candle on the ground, right of the pool
+  const sh = ctx.createRadialGradient(cx + poolRx * 0.55, baseY + 3, 0,
+                                      cx + poolRx * 0.55, baseY + 3, poolRx * 0.55);
+  sh.addColorStop(0, 'rgba(0,0,0,0.28)');
+  sh.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = sh;
+  ctx.beginPath();
+  ctx.ellipse(cx + poolRx * 0.55, baseY + 3, poolRx * 0.5, poolRy * 0.5, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // --- candle body --------------------------------------------
+  const x0 = cx - cw / 2, x1 = cx + cw / 2;
+  const wg2 = ctx.createLinearGradient(x0, 0, x1, 0);
+  wg2.addColorStop(0, '#d9c8a4');
+  wg2.addColorStop(0.18, '#f4ead2');
+  wg2.addColorStop(0.5, '#f8efdb');
+  wg2.addColorStop(0.82, '#e7d7b4');
+  wg2.addColorStop(1, '#c9b78f');
+  ctx.fillStyle = wg2;
+  // body with a slightly melted, concave top
+  ctx.beginPath();
+  ctx.moveTo(x0, baseY);
+  ctx.lineTo(x0, topY + cw * 0.16);
+  ctx.quadraticCurveTo(cx, topY - cw * 0.10, x1, topY + cw * 0.16);
+  ctx.lineTo(x1, baseY);
+  ctx.closePath();
+  ctx.fill();
+  // faint vertical wax grain
+  ctx.strokeStyle = 'rgba(120,100,70,0.10)';
+  ctx.lineWidth = 1;
+  for (let i = -2; i <= 2; i++) {
+    const gx = cx + i * cw * 0.16;
+    ctx.beginPath();
+    ctx.moveTo(gx, topY + cw * 0.2);
+    ctx.bezierCurveTo(gx + 1.5, topY + ch * 0.4, gx - 1.5, topY + ch * 0.7, gx, baseY - 2);
+    ctx.stroke();
+  }
+
+  // --- wax drips down the side (lengthen with the day) --------
+  // Each drip flows from the melted top, tapering to a bulb.
+  function drip(sideX, startElapsed, maxLen, width) {
+    if (elapsed <= startElapsed) return;
+    const len = Math.min(1, (elapsed - startElapsed) / 0.35) * maxLen;
+    const dx = sideX;
+    const top = topY + cw * 0.08;
+    ctx.fillStyle = '#efe2c2';
+    ctx.beginPath();
+    ctx.moveTo(dx - width * 0.32, top);
+    ctx.lineTo(dx + width * 0.32, top);
+    ctx.lineTo(dx + width / 2, top + len);
+    ctx.quadraticCurveTo(dx, top + len + width * 0.9, dx - width / 2, top + len);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = 'rgba(255,244,214,0.5)';
+    ctx.beginPath();
+    ctx.ellipse(dx, top + len + width * 0.4, width * 0.28, width * 0.5, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  drip(x0 + cw * 0.06, 0.18, ch * 0.34, cw * 0.16);
+  drip(x1 - cw * 0.10, 0.52, ch * 0.22, cw * 0.13);
+
+  // --- hour marks etched on the wax ----------------------------
+  // Mark k sits k hours above the base; only marks at or below
+  // the flame are still there — the rest have burned away.
+  const markColor = 'rgba(74,58,38,0.5)';
+  ctx.strokeStyle = markColor;
+  ctx.fillStyle = 'rgba(74,58,38,0.62)';
+  ctx.font = Math.round(v * 0.021) + 'px Georgia, serif';
+  ctx.textAlign = 'right';
+  ctx.textBaseline = 'middle';
+  for (let k = 0; k <= 24; k++) {
+    // align marks to the same scale as the candle height
+    const my2 = baseY - minStub - (k / 24) * (maxH - minStub);
+    if (my2 < topY - 1) continue;              // burned away
+    if (my2 > baseY - 2) continue;             // below the base
+    const major = k % 6 === 0;
+    ctx.lineWidth = major ? 1.6 : 1;
+    ctx.beginPath();
+    ctx.moveTo(x0 + (major ? 0 : cw * 0.18), my2);
+    ctx.lineTo(x1 - (major ? 0 : cw * 0.18), my2);
+    ctx.stroke();
+    if (major && k > 0) {
+      ctx.fillText(String(k), x0 - cw * 0.28, my2);
+    }
+  }
+  // the "0" at the base, hours left when the candle is spent
+  ctx.fillText('0', x0 - cw * 0.28, baseY - 4);
+
+  // molten wax at the top: a small crater of liquid wax around the
+  // wick, hot near the flame, plus a soft glow with no hard edge
+  const melt = ctx.createRadialGradient(cx, topY, 0, cx, topY, cw * 1.15);
+  melt.addColorStop(0, 'rgba(255,196,100,0.20)');
+  melt.addColorStop(0.6, 'rgba(255,180,80,0.07)');
+  melt.addColorStop(1, 'rgba(255,180,80,0)');
+  ctx.fillStyle = melt;
+  ctx.beginPath();
+  ctx.arc(cx, topY, cw * 1.15, 0, Math.PI * 2);
+  ctx.fill();
+  const mg = ctx.createLinearGradient(0, topY - cw * 0.10, 0, topY + cw * 0.18);
+  mg.addColorStop(0, '#ffe6ab');
+  mg.addColorStop(1, '#eedcae');
+  ctx.fillStyle = mg;
+  ctx.beginPath();
+  ctx.ellipse(cx, topY + cw * 0.04, cw * 0.46, cw * 0.13, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // --- wick ----------------------------------------------------
+  const wickTop = topY - cw * 0.34;
+  ctx.strokeStyle = '#241a10';
+  ctx.lineWidth = Math.max(2, cw * 0.045);
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(cx, topY - cw * 0.02);
+  ctx.quadraticCurveTo(cx + cw * 0.05, topY - cw * 0.18, cx + cw * 0.02, wickTop);
+  ctx.stroke();
+  // ember glow at the wick tip
+  const eg = ctx.createRadialGradient(cx + cw * 0.02, wickTop, 0, cx + cw * 0.02, wickTop, cw * 0.22);
+  eg.addColorStop(0, 'rgba(255,140,40,0.85)');
+  eg.addColorStop(1, 'rgba(255,140,40,0)');
+  ctx.fillStyle = eg;
+  ctx.beginPath();
+  ctx.arc(cx + cw * 0.02, wickTop, cw * 0.22, 0, Math.PI * 2);
+  ctx.fill();
+
+  // --- flame ---------------------------------------------------
+  // Flickers with the seconds: a flare on every new second,
+  // decaying across the second, over a slow breathing sway.
+  const flare = pinned ? 0.04 : Math.exp(-frac * 3.5) * 0.10;
+  const n = noise(tSec);
+  const sway = noise(tSec * 0.6) * cw * 0.10;
+  const fH = cw * 1.55 * (1 + 0.07 * n + flare);
+  const fW = cw * 0.62 * (1 - 0.04 * n + flare * 0.4);
+  const fy = wickTop - cw * 0.06;   // flame base
+  const fx = cx + cw * 0.02 + sway * 0.4;
+
+  // outer halo
+  const halo = ctx.createRadialGradient(fx, fy - fH * 0.45, 0, fx, fy - fH * 0.45, cw * 1.9);
+  halo.addColorStop(0, 'rgba(255,180,80,0.30)');
+  halo.addColorStop(0.55, 'rgba(255,150,50,0.10)');
+  halo.addColorStop(1, 'rgba(255,150,50,0)');
+  ctx.fillStyle = halo;
+  ctx.beginPath();
+  ctx.arc(fx, fy - fH * 0.45, cw * 1.9, 0, Math.PI * 2);
+  ctx.fill();
+
+  function teardrop(cx0, base, w, hgt, lean) {
+    ctx.beginPath();
+    ctx.moveTo(cx0 - w / 2, base);
+    ctx.bezierCurveTo(cx0 - w * 0.52, base - hgt * 0.45,
+                      cx0 - w * 0.28, base - hgt * 0.82,
+                      cx0 + lean, base - hgt);
+    ctx.bezierCurveTo(cx0 + w * 0.30, base - hgt * 0.80,
+                      cx0 + w * 0.52, base - hgt * 0.45,
+                      cx0 + w / 2, base);
+    // rounded bottom that wraps the wick, not a flat cut
+    ctx.quadraticCurveTo(cx0, base + hgt * 0.36, cx0 - w / 2, base);
+    ctx.closePath();
+  }
+  // outer flame
+  const fg = ctx.createLinearGradient(0, fy, 0, fy - fH);
+  fg.addColorStop(0, 'rgba(255,140,20,0.95)');
+  fg.addColorStop(0.55, 'rgba(255,190,60,0.95)');
+  fg.addColorStop(1, 'rgba(255,226,120,0.95)');
+  ctx.fillStyle = fg;
+  teardrop(fx, fy, fW, fH, sway);
+  ctx.fill();
+  // inner bright core
+  const cg = ctx.createLinearGradient(0, fy, 0, fy - fH * 0.62);
+  cg.addColorStop(0, 'rgba(255,246,200,0.98)');
+  cg.addColorStop(1, 'rgba(255,220,130,0.9)');
+  ctx.fillStyle = cg;
+  teardrop(fx, fy, fW * 0.52, fH * 0.62, sway * 0.7);
+  ctx.fill();
+  // white-hot heart at the base
+  ctx.fillStyle = 'rgba(255,255,240,0.95)';
+  ctx.beginPath();
+  ctx.ellipse(fx, fy - fH * 0.12, fW * 0.16, fH * 0.10, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // --- readout --------------------------------------------------
+  const hh = String(h).padStart(2, '0');
+  const mm = String(m).padStart(2, '0');
+  const ss = String(s).padStart(2, '0');
+  const rh = Math.floor(remainH);
+  const rm = Math.floor((remainH - rh) * 60);
+  clockEl.innerHTML = hh + ':' + mm + ':' + ss +
+    '<small>' + rh + 'H ' + String(rm).padStart(2, '0') + 'M LEFT</small>';
+}
+
+// Tap cycles: corner only -> corner + readout -> clean -> corner only.
+let mode = 0;
+let hintHidden = false;
+function hideHint() {
+  if (!hintHidden) { hintHidden = true; hintEl.style.opacity = '0'; }
+}
+setTimeout(hideHint, 6000);
+
+document.addEventListener('pointerdown', () => {
+  mode = (mode + 1) % 3;
+  clockEl.classList.toggle('show', mode === 1);
+  document.body.classList.toggle('clean', mode === 2);
+  hideHint();
+});
+
+function frame(now) {
+  draw(now);
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

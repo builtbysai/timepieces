@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <title>Candle — Timepieces № 15</title>
 <!-- candle-no15-burn -->
+<!-- candle-gyro-lean -->
 <style>
 html,body { margin:0; padding:0; height:100%; overflow:hidden; background:#121110; touch-action:none; }
 body { display:flex; align-items:center; justify-content:center; }
@@ -48,7 +49,9 @@ body.clean .corner, body.clean .clock, body.clean .hint { opacity:0 !important; 
 // base grows as the day passes, with drips running down the side
 // once the day is well under way. Read the height: the candle
 // that is left is the day that is left. Tap cycles the labels.
-// ?hour=9.75 and ?time=09:45 both pin the time.
+// Tilt the phone and the flame leans against the tilt, the way
+// a real flame holds to gravity. ?hour=9.75 and ?time=09:45
+// both pin the time.
 
 const canvas = document.getElementById('c');
 const ctx = canvas.getContext('2d');
@@ -92,6 +95,56 @@ function nowParts() {
   if (pinned) return pinned;
   const d = new Date();
   return { h: d.getHours(), m: d.getMinutes(), s: d.getSeconds(), ms: d.getMilliseconds() };
+}
+
+// --- gyroscope: the flame leans with the phone ----------------
+// A real flame always points up against gravity, so when the
+// phone tilts, the flame leans the other way on screen. The
+// baseline is calibrated from the first reading, so any holding
+// angle works. On iOS the permission prompt fires on first tap;
+// everywhere else the listener starts at once. No sensor, no
+// change: the flame just sways as before.
+let gyroOn = false;
+let baseLat = null, baseDep = null;
+let tiltLean = 0;    // smoothed lateral lean, in candle-widths
+let tiltSquash = 0;  // smoothed foreshortening from front/back tilt
+window.__gyro = { active: false, lean: 0 };
+function onOrientation(e) {
+  if (e.gamma == null || e.beta == null) return;
+  // The lateral axis follows the screen: in landscape (wide
+  // viewport) the phone's beta is the sideways tilt, in portrait
+  // it is gamma. Viewport aspect is the reliable signal here —
+  // window.orientation and screen.orientation disagree across
+  // browsers and headless runs.
+  const land = W > H;
+  const lat = land ? e.beta : e.gamma;
+  const dep = land ? e.gamma : e.beta;
+  if (baseLat === null) {
+    baseLat = lat; baseDep = dep;
+    window.__gyro.active = true;
+    if (!hintHidden) hintEl.textContent = 'tilt to lean the flame · tap for exact time';
+  }
+  const dLat = lat - baseLat;
+  const dDep = dep - baseDep;
+  const targetLean = Math.max(-0.55, Math.min(0.55, -dLat / 45 * 0.55));
+  const targetSquash = Math.max(-0.18, Math.min(0.18, dDep / 90 * 0.18));
+  tiltLean += (targetLean - tiltLean) * 0.14;
+  tiltSquash += (targetSquash - tiltSquash) * 0.14;
+  window.__gyro.lean = tiltLean;
+}
+function enableGyro() {
+  if (gyroOn) return;
+  gyroOn = true;
+  window.addEventListener('deviceorientation', onOrientation);
+}
+// Always attach the listener at once: on Android and desktop the
+// events flow immediately, and on iOS they simply stay quiet
+// until the permission prompt (fired on the first tap, below)
+// is granted — the already-attached listener then starts
+// receiving. Do not gate the listener on requestPermission
+// existing: newer Chrome exposes it too.
+if (window.DeviceOrientationEvent) {
+  enableGyro();
 }
 
 // Smooth pseudo-noise from sines — no library, deterministic.
@@ -283,10 +336,11 @@ function draw(now) {
   const flare = pinned ? 0.04 : Math.exp(-frac * 3.5) * 0.10;
   const n = noise(tSec);
   const sway = noise(tSec * 0.6) * cw * 0.10;
-  const fH = cw * 1.55 * (1 + 0.07 * n + flare);
+  const leanPx = tiltLean * cw;   // gyroscope lean, in pixels
+  const fH = cw * 1.55 * (1 + 0.07 * n + flare - tiltSquash);
   const fW = cw * 0.62 * (1 - 0.04 * n + flare * 0.4);
   const fy = wickTop - cw * 0.06;   // flame base
-  const fx = cx + cw * 0.02 + sway * 0.4;
+  const fx = cx + cw * 0.02 + sway * 0.4 + leanPx * 0.35;
 
   // outer halo
   const halo = ctx.createRadialGradient(fx, fy - fH * 0.45, 0, fx, fy - fH * 0.45, cw * 1.9);
@@ -317,14 +371,14 @@ function draw(now) {
   fg.addColorStop(0.55, 'rgba(255,190,60,0.95)');
   fg.addColorStop(1, 'rgba(255,226,120,0.95)');
   ctx.fillStyle = fg;
-  teardrop(fx, fy, fW, fH, sway);
+  teardrop(fx, fy, fW, fH, sway + leanPx);
   ctx.fill();
   // inner bright core
   const cg = ctx.createLinearGradient(0, fy, 0, fy - fH * 0.62);
   cg.addColorStop(0, 'rgba(255,246,200,0.98)');
   cg.addColorStop(1, 'rgba(255,220,130,0.9)');
   ctx.fillStyle = cg;
-  teardrop(fx, fy, fW * 0.52, fH * 0.62, sway * 0.7);
+  teardrop(fx, fy, fW * 0.52, fH * 0.62, sway * 0.7 + leanPx * 0.8);
   ctx.fill();
   // white-hot heart at the base
   ctx.fillStyle = 'rgba(255,255,240,0.95)';
@@ -351,6 +405,11 @@ function hideHint() {
 setTimeout(hideHint, 6000);
 
 document.addEventListener('pointerdown', () => {
+  if (window.DeviceOrientationEvent && typeof DeviceOrientationEvent.requestPermission === 'function' && !gyroOn) {
+    DeviceOrientationEvent.requestPermission().then(function (r) {
+      if (r === 'granted') enableGyro();
+    }).catch(function () {});
+  }
   mode = (mode + 1) % 3;
   clockEl.classList.toggle('show', mode === 1);
   document.body.classList.toggle('clean', mode === 2);
